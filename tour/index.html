@@ -24,6 +24,7 @@
   button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   .hint { color: var(--muted); font-size: 13px; background: var(--card); border-radius: 10px; padding: 6px 10px; align-self: flex-start; border: 1px solid var(--line); }
   #map { position: fixed; right: 16px; top: max(64px, calc(env(safe-area-inset-top) + 52px)); width: 132px; height: 132px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); display: none; }
+  #status[hidden] { display: none; }
   #status { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
 </style>
 <script type="importmap">
@@ -121,10 +122,18 @@ resize();
 let model = null;
 let splats = null;
 let photoreal = false;
-new GLTFLoader().load(src, (gltf) => {
+/** Loads the measured model (and optional splat), replacing whatever was shown. */
+function loadModel(modelUrl, splat) {
+  if (model) scene.remove(model);
+  if (splats) { scene.remove(splats); splats.dispose?.(); splats = null; }
+  floors.length = 0;
+  document.getElementById('rooms').replaceChildren();
+  document.getElementById('photo').hidden = true;
+  photoreal = false;
+  new GLTFLoader().load(modelUrl, (gltf) => {
   model = gltf.scene;
   scene.add(model);
-  if (splatSrc) loadSplats();
+  if (splat) loadSplats(splat.url, splat.name);
   model.traverse((o) => { if (o.isMesh && /Floor/.test(o.name)) floors.push(o); });
   box = new THREE.Box3().setFromObject(model);
   floorY = box.min.y;
@@ -163,14 +172,30 @@ new GLTFLoader().load(src, (gltf) => {
   // Face into the home rather than the nearest wall.
   const look = center.clone().sub(walkCam.position);
   if (look.lengthSq() > 0.25) yaw = Math.atan2(-look.x, -look.z);
-  status.remove();
-}, undefined, () => { status.textContent = 'This tour could not be loaded. Ask for a new link.'; });
+  status.hidden = true;
+  }, undefined, () => { status.hidden = false; status.textContent = 'This tour could not be loaded. Ask for a new link.'; });
+}
+loadModel(src, splatSrc ? { url: splatSrc, name: splatSrc } : null);
 
-async function loadSplats() {
+// Files dropped on the page (a .glb and optionally a .ply/.splat/.ksplat trained on a
+// computer) open right here, without uploading them anywhere.
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', (e) => {
+  e.preventDefault();
+  const files = [...e.dataTransfer.files];
+  const glb = files.find((f) => /\.glb$/i.test(f.name));
+  const splat = files.find((f) => /\.(ply|splat|ksplat)$/i.test(f.name));
+  if (!glb) return;
+  if (homeName === null) document.getElementById('name').textContent = glb.name.replace(/\.glb$/i, '').replace(/[-_]+/g, ' ');
+  loadModel(URL.createObjectURL(glb), splat ? { url: URL.createObjectURL(splat), name: splat.name } : null);
+});
+
+async function loadSplats(url, name) {
   try {
-    const { DropInViewer, SceneRevealMode } = await import('splats');
+    const { DropInViewer, SceneRevealMode, SceneFormat } = await import('splats');
     splats = new DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, sceneRevealMode: SceneRevealMode.Instant });
-    await splats.addSplatScene(splatSrc, { showLoadingUI: false, progressiveLoad: true });
+    const format = /\.ksplat$/i.test(name) ? SceneFormat.KSplat : /\.splat$/i.test(name) ? SceneFormat.Splat : SceneFormat.Ply;
+    await splats.addSplatScene(url, { showLoadingUI: false, progressiveLoad: false, format });
     splats.visible = false;
     scene.add(splats);
     const button = document.getElementById('photo');
