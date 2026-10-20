@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Home Tour</title>
+<meta name="description" content="3D tour of a home measured with Home Measure.">
+<style>
+  :root { --ink:#11262A; --muted:#5B6B6E; --accent:#0A766F; --card:#ffffff; --bg:#F4F7F6; --line:rgba(17,38,42,.12); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ink:#E7EFEE; --muted:#9DB0AE; --card:#16262A; --bg:#0D1A1D; --line:rgba(255,255,255,.14); } }
+  :root[data-theme="dark"] { --ink:#E7EFEE; --muted:#9DB0AE; --card:#16262A; --bg:#0D1A1D; --line:rgba(255,255,255,.14); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; touch-action: none; display: block; }
+  header { position: fixed; top: 0; left: 0; right: 0; padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top)); display: flex; align-items: center; gap: 10px; pointer-events: none; }
+  .mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 800; font-size: 12px; display: grid; place-items: center; flex: none; }
+  .title { min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px 10px; }
+  .title b { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title span { color: var(--muted); font-size: 12px; }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+  .row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .row::-webkit-scrollbar { display: none; }
+  button { font: inherit; font-weight: 600; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 8px 14px; min-height: 40px; white-space: nowrap; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .hint { color: var(--muted); font-size: 13px; background: var(--card); border-radius: 10px; padding: 6px 10px; align-self: flex-start; border: 1px solid var(--line); }
+  #map { position: fixed; right: 16px; top: max(64px, calc(env(safe-area-inset-top) + 52px)); width: 132px; height: 132px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); display: none; }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+<canvas id="map" aria-label="Map of the home; tap to walk there"></canvas>
+<div id="status">Loading the 3D home…</div>
+<header>
+  <div class="mark">HM</div>
+  <div class="title"><b id="name">Home tour</b><span>Measured with Home Measure</span></div>
+</header>
+<div class="bar">
+  <div class="hint" id="hint">Drag to turn the model. Pinch or scroll to zoom.</div>
+  <div class="row" id="rooms"></div>
+  <div class="row">
+    <button id="dollhouse" aria-pressed="true">Dollhouse</button>
+    <button id="walk" aria-pressed="false">Walk through</button>
+  </div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const params = new URLSearchParams(location.search);
+const src = params.get('model') || 'sample.glb';
+const homeName = params.get('name');
+if (homeName) { document.getElementById('name').textContent = homeName; document.title = homeName + ' · Home Tour'; }
+
+const canvas = document.getElementById('view');
+const mapCanvas = document.getElementById('map');
+const status = document.getElementById('status');
+const hint = document.getElementById('hint');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const mapRenderer = new THREE.WebGLRenderer({ canvas: mapCanvas, antialias: true, alpha: true });
+mapRenderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+mapRenderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#F4F7F6');
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb8b0a4, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(4, 10, 6);
+scene.add(sun);
+
+const orbitCam = new THREE.PerspectiveCamera(50, 1, 0.05, 500);
+const walkCam = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
+walkCam.rotation.order = 'YXZ';
+const controls = new OrbitControls(orbitCam, canvas);
+controls.enableDamping = true;
+const mapCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+const EYE = 1.6;
+let mode = 'dollhouse';
+let floorY = 0;
+const floors = [];
+let box = null;
+let target = null;
+let yaw = 0;
+let pitch = -0.1;
+
+// The walker on the minimap: a dot with a heading cone, drawn only into the map.
+const marker = new THREE.Group();
+const markerMat = new THREE.MeshBasicMaterial({ color: 0x0A766F, depthTest: false });
+const dot = new THREE.Mesh(new THREE.CircleGeometry(0.35, 24), markerMat);
+dot.rotation.x = -Math.PI / 2;
+const cone = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.8, 16), markerMat);
+cone.rotation.x = -Math.PI / 2;
+cone.position.z = -0.5;
+marker.add(dot, cone);
+marker.renderOrder = 10;
+marker.visible = false;
+scene.add(marker);
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  for (const cam of [orbitCam, walkCam]) { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); }
+  mapRenderer.setSize(132, 132);
+}
+addEventListener('resize', resize);
+resize();
+
+new GLTFLoader().load(src, (gltf) => {
+  const model = gltf.scene;
+  scene.add(model);
+  model.traverse((o) => { if (o.isMesh && /Floor/.test(o.name)) floors.push(o); });
+  box = new THREE.Box3().setFromObject(model);
+  floorY = box.min.y;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const r = Math.max(size.x, size.z, 3);
+  orbitCam.position.set(center.x + r * 0.6, center.y + r * 1.0, center.z + r * 0.8);
+  controls.target.copy(center);
+  controls.update();
+  const half = (Math.max(size.x, size.z) / 2) * 1.1;
+  Object.assign(mapCam, { left: -half, right: half, top: half, bottom: -half });
+  mapCam.position.set(center.x, box.max.y + 20, center.z);
+  mapCam.up.set(0, 0, -1);
+  mapCam.lookAt(center.x, 0, center.z);
+  mapCam.updateProjectionMatrix();
+
+  // RoomPlan's rooms come as empty nodes named like "livingRoom0".
+  const rooms = [];
+  model.traverse((o) => {
+    const m = /^(livingRoom|bedroom|bathroom|kitchen|diningRoom)/.exec(o.name || '');
+    if (m && !o.isMesh && !o.name.includes('_')) rooms.push({ kind: m[1], pos: o.getWorldPosition(new THREE.Vector3()) });
+  });
+  const labels = { livingRoom: 'Living room', bedroom: 'Bedroom', bathroom: 'Bathroom', kitchen: 'Kitchen', diningRoom: 'Dining' };
+  const seen = {};
+  const roomsRow = document.getElementById('rooms');
+  for (const room of rooms) {
+    const total = rooms.filter((x) => x.kind === room.kind).length;
+    seen[room.kind] = (seen[room.kind] || 0) + 1;
+    const b = document.createElement('button');
+    b.textContent = labels[room.kind] + (total > 1 ? ' ' + seen[room.kind] : '');
+    b.onclick = () => { setMode('walk'); walkTo(room.pos); };
+    roomsRow.appendChild(b);
+  }
+  const start = rooms.find((x) => x.kind === 'livingRoom') || rooms[0];
+  walkCam.position.set(start ? start.pos.x : center.x, floorY + EYE, start ? start.pos.z : center.z);
+  // Face into the home rather than the nearest wall.
+  const look = center.clone().sub(walkCam.position);
+  if (look.lengthSq() > 0.25) yaw = Math.atan2(-look.x, -look.z);
+  status.remove();
+}, undefined, () => { status.textContent = 'This tour could not be loaded. Ask for a new link.'; });
+
+function setMode(next) {
+  mode = next;
+  document.getElementById('dollhouse').setAttribute('aria-pressed', String(mode === 'dollhouse'));
+  document.getElementById('walk').setAttribute('aria-pressed', String(mode === 'walk'));
+  controls.enabled = mode === 'dollhouse';
+  mapCanvas.style.display = mode === 'walk' ? 'block' : 'none';
+  hint.textContent = mode === 'walk' ? 'Drag to look around. Tap the floor to walk there.' : 'Drag to turn the model. Pinch or scroll to zoom.';
+}
+document.getElementById('dollhouse').onclick = () => setMode('dollhouse');
+document.getElementById('walk').onclick = () => setMode('walk');
+
+function walkTo(p) { target = new THREE.Vector3(p.x, floorY + EYE, p.z); }
+
+// Walking: drag to look around, tap (without dragging) to walk to the tapped floor point.
+const ray = new THREE.Raycaster();
+let drag = null;
+canvas.addEventListener('pointerdown', (e) => { if (mode === 'walk') drag = { x: e.clientX, y: e.clientY, moved: 0 }; });
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x;
+  const dy = e.clientY - drag.y;
+  drag.moved += Math.abs(dx) + Math.abs(dy);
+  drag.x = e.clientX;
+  drag.y = e.clientY;
+  yaw += dx * 0.005;
+  pitch = Math.max(-1.2, Math.min(1.2, pitch + dy * 0.005));
+});
+function floorHit(p, cam) {
+  ray.setFromCamera(p, cam);
+  return ray.intersectObjects(floors.length ? floors : scene.children, true)[0];
+}
+addEventListener('pointerup', (e) => {
+  if (drag && drag.moved < 6) {
+    const hit = floorHit(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), walkCam);
+    if (hit) walkTo(hit.point);
+  }
+  drag = null;
+});
+mapCanvas.addEventListener('click', (e) => {
+  const r = mapCanvas.getBoundingClientRect();
+  const hit = floorHit(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), mapCam);
+  if (hit) walkTo(hit.point);
+});
+const keys = {};
+addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
+addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (mode !== 'walk') {
+    controls.update();
+    renderer.render(scene, orbitCam);
+    return;
+  }
+  walkCam.rotation.set(pitch, yaw, 0);
+  const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+  const step = 1.6 * dt;
+  const move = new THREE.Vector3();
+  if (keys.w || keys.arrowup) move.add(forward);
+  if (keys.s || keys.arrowdown) move.sub(forward);
+  if (keys.a || keys.arrowleft) move.sub(right);
+  if (keys.d || keys.arrowright) move.add(right);
+  if (move.lengthSq() > 0) { walkCam.position.addScaledVector(move.normalize(), step); target = null; }
+  if (target) {
+    const d = target.clone().sub(walkCam.position);
+    if (d.length() < 0.02) target = null;
+    else walkCam.position.addScaledVector(d, Math.min(1, dt * 4));
+  }
+  renderer.render(scene, walkCam);
+  marker.visible = true;
+  marker.position.set(walkCam.position.x, (box ? box.max.y : 3) + 1, walkCam.position.z);
+  marker.rotation.y = yaw;
+  mapRenderer.render(scene, mapCam);
+  marker.visible = false;
+});
+</script>
+</body>
+</html>
