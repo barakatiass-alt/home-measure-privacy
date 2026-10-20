@@ -27,7 +27,11 @@
   #status { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
 </style>
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "splats": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+} }
 </script>
 </head>
 <body>
@@ -44,6 +48,7 @@
   <div class="row">
     <button id="dollhouse" aria-pressed="true">Dollhouse</button>
     <button id="walk" aria-pressed="false">Walk through</button>
+    <button id="photo" aria-pressed="false" hidden>Photoreal</button>
   </div>
 </div>
 <script type="module">
@@ -53,6 +58,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const params = new URLSearchParams(location.search);
 const src = params.get('model') || 'sample.glb';
+// Optional photoreal splat (.ply/.splat/.ksplat), trained from the same scan, so it
+// shares the model's coordinates.
+const splatSrc = params.get('splat');
 const homeName = params.get('name');
 if (homeName) { document.getElementById('name').textContent = homeName; document.title = homeName + ' · Home Tour'; }
 
@@ -110,9 +118,13 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+let model = null;
+let splats = null;
+let photoreal = false;
 new GLTFLoader().load(src, (gltf) => {
-  const model = gltf.scene;
+  model = gltf.scene;
   scene.add(model);
+  if (splatSrc) loadSplats();
   model.traverse((o) => { if (o.isMesh && /Floor/.test(o.name)) floors.push(o); });
   box = new THREE.Box3().setFromObject(model);
   floorY = box.min.y;
@@ -153,6 +165,31 @@ new GLTFLoader().load(src, (gltf) => {
   if (look.lengthSq() > 0.25) yaw = Math.atan2(-look.x, -look.z);
   status.remove();
 }, undefined, () => { status.textContent = 'This tour could not be loaded. Ask for a new link.'; });
+
+async function loadSplats() {
+  try {
+    const { DropInViewer, SceneRevealMode } = await import('splats');
+    splats = new DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, sceneRevealMode: SceneRevealMode.Instant });
+    await splats.addSplatScene(splatSrc, { showLoadingUI: false, progressiveLoad: true });
+    splats.visible = false;
+    scene.add(splats);
+    const button = document.getElementById('photo');
+    button.hidden = false;
+    button.onclick = () => setPhotoreal(!photoreal);
+    setPhotoreal(true);
+  } catch {
+    // The measured model still works without the photoreal layer.
+  }
+}
+
+/** Photoreal: the splat replaces the measured surfaces (furniture boxes hide too). */
+function setPhotoreal(on) {
+  photoreal = on && !!splats;
+  document.getElementById('photo').setAttribute('aria-pressed', String(photoreal));
+  if (splats) splats.visible = photoreal;
+  model.traverse((o) => { if (o.isMesh) o.visible = !photoreal || /Floor/.test(o.name); });
+  for (const f of floors) f.material.visible = !photoreal;
+}
 
 function setMode(next) {
   mode = next;
@@ -228,7 +265,10 @@ renderer.setAnimationLoop(() => {
   marker.visible = true;
   marker.position.set(walkCam.position.x, (box ? box.max.y : 3) + 1, walkCam.position.z);
   marker.rotation.y = yaw;
+  // The map always shows the measured floors, also under the photoreal layer.
+  if (photoreal) for (const f of floors) f.material.visible = true;
   mapRenderer.render(scene, mapCam);
+  if (photoreal) for (const f of floors) f.material.visible = false;
   marker.visible = false;
 });
 </script>
