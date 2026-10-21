@@ -19,6 +19,7 @@
   .title { min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px 10px; }
   .title b { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .title span { color: var(--muted); font-size: 12px; }
+  .title a { color: inherit; }
   .bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
   .row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
   .row::-webkit-scrollbar { display: none; }
@@ -43,7 +44,7 @@
 <div id="status">Loading the 3D home…</div>
 <header>
   <div class="mark">HM</div>
-  <div class="title"><b id="name">Home tour</b><span>Measured with Home Measure</span></div>
+  <div class="title"><b id="name">Home tour</b><span>Measured with <a href="../" target="_blank" rel="noopener">Home Measure</a></span></div>
 </header>
 <div class="bar">
   <div class="hint" id="hint">Drag to turn the model. Pinch or scroll to zoom.</div>
