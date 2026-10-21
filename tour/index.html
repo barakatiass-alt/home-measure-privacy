@@ -130,7 +130,10 @@ scene.add(marker);
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
-  for (const cam of [orbitCam, walkCam]) { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); }
+  const aspect = innerWidth / innerHeight;
+  // Walking on a portrait phone: widen the view so it shows about 57° across, not 38°.
+  walkCam.fov = aspect < 1 ? Math.min(100, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(35)) / aspect))) : 75;
+  for (const cam of [orbitCam, walkCam]) { cam.aspect = aspect; cam.updateProjectionMatrix(); }
   mapRenderer.setSize(132, 132);
 }
 addEventListener('resize', resize);
