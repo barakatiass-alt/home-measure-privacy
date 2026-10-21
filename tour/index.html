@@ -155,8 +155,13 @@ function loadModel(modelUrl, splat) {
   floorY = box.min.y;
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
-  const r = Math.max(size.x, size.z, 3);
-  orbitCam.position.set(center.x + r * 0.6, center.y + r * 1.0, center.z + r * 0.8);
+  // Far enough that the whole home fits, also across a narrow portrait phone screen.
+  const radius = Math.max(size.length() / 2, 1.5);
+  const vHalf = THREE.MathUtils.degToRad(orbitCam.fov / 2);
+  const hHalf = Math.atan(Math.tan(vHalf) * (innerWidth / innerHeight));
+  const distance = (radius / Math.sin(Math.min(vHalf, hHalf))) * 1.05;
+  const dir = new THREE.Vector3(0.6, 1.0, 0.8).normalize();
+  orbitCam.position.copy(center).addScaledVector(dir, distance);
   controls.target.copy(center);
   controls.update();
   const half = (Math.max(size.x, size.z) / 2) * 1.1;
