@@ -390,6 +390,82 @@ export function unpackGaussians(data) {
   return out;
 }
 
+// Tile lists built on the GPU (no read-back): each splat appends itself to the
+// 16 x 16 tiles it covers (up to TILE_CAP per tile), then each tile sorts its list by
+// depth with a bitonic sort in workgroup memory and publishes its [start, end).
+const TILE_CAP = 1024;
+
+const BIN = COMMON + /* wgsl */ `
+@group(0) @binding(0) var<uniform> cam: Camera;
+@group(0) @binding(1) var<storage, read> splats: array<f32>;
+@group(0) @binding(2) var<storage, read_write> counts: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> lists: array<u32>;
+const CAP = ${TILE_CAP}u;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  let i = id.x;
+  if (i >= cam.count) { return; }
+  let o = i * 12u;
+  if (splats[o + 11u] < 0.5) { return; }
+  let u = splats[o]; let v = splats[o + 1u]; let r = splats[o + 6u];
+  let tilesX = (u32(cam.size.x) + 15u) / 16u;
+  let tilesY = (u32(cam.size.y) + 15u) / 16u;
+  let x0 = u32(clamp(floor((u - r - 0.5) / 16.0), 0.0, f32(tilesX - 1u)));
+  let x1 = u32(clamp(floor((u + r - 0.5) / 16.0), -1.0, f32(tilesX - 1u)) + 1.0);
+  let y0 = u32(clamp(floor((v - r - 0.5) / 16.0), 0.0, f32(tilesY - 1u)));
+  let y1 = u32(clamp(floor((v + r - 0.5) / 16.0), -1.0, f32(tilesY - 1u)) + 1.0);
+  for (var ty = y0; ty < y1; ty++) {
+    for (var tx = x0; tx < x1; tx++) {
+      let t = ty * tilesX + tx;
+      let k = atomicAdd(&counts[t], 1u);
+      if (k < CAP) { lists[t * CAP + k] = i; }
+    }
+  }
+}`;
+
+const SORT = /* wgsl */ `
+@group(0) @binding(0) var<storage, read> splats: array<f32>;
+@group(0) @binding(1) var<storage, read> counts: array<u32>;
+@group(0) @binding(2) var<storage, read_write> lists: array<u32>;
+@group(0) @binding(3) var<storage, read_write> ranges: array<u32>;
+const CAP = ${TILE_CAP}u;
+var<workgroup> keys: array<f32, ${TILE_CAP}>;
+var<workgroup> vals: array<u32, ${TILE_CAP}>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let t = wg.x;
+  let n = min(counts[t], CAP);
+  for (var k = 0u; k < CAP / 256u; k++) {
+    let j = lid.x + k * 256u;
+    if (j < n) { let s = lists[t * CAP + j]; keys[j] = splats[s * 12u + 7u]; vals[j] = s; }
+    else { keys[j] = 3.0e38; vals[j] = 0u; }
+  }
+  workgroupBarrier();
+  for (var size = 2u; size <= CAP; size = size * 2u) {
+    for (var stride = size / 2u; stride > 0u; stride = stride / 2u) {
+      for (var k = 0u; k < CAP / 256u; k++) {
+        let i = lid.x + k * 256u;
+        let j = i ^ stride;
+        if (j > i) {
+          let up = (i & size) == 0u;
+          let a = keys[i]; let b = keys[j];
+          // Equal depths keep splat-index order, like the reference's stable sort.
+          let swap = select(a < b || (a == b && vals[i] < vals[j]), a > b || (a == b && vals[i] > vals[j]), up);
+          if (swap) { keys[i] = b; keys[j] = a; let x = vals[i]; vals[i] = vals[j]; vals[j] = x; }
+        }
+      }
+      workgroupBarrier();
+    }
+  }
+  for (var k = 0u; k < CAP / 256u; k++) {
+    let j = lid.x + k * 256u;
+    if (j < n) { lists[t * CAP + j] = vals[j]; }
+  }
+  if (lid.x == 0u) { ranges[t * 2u] = t * CAP; ranges[t * 2u + 1u] = t * CAP + n; }
+}`;
+
 /** Packs Gaussians ({mean, logScale, rotation, opacityLogit, color}) into the GPU layout. */
 export function packGaussians(gaussians) {
   const data = new Float32Array(gaussians.length * 16);
@@ -406,12 +482,13 @@ function cameraUniform(cam, count) {
   return u;
 }
 
-export async function createRenderer() {
+/** `gpuTiles: false` builds tile lists on the CPU (the original path, kept for checks). */
+export async function createRenderer({ gpuTiles = true } = {}) {
   if (!navigator.gpu) throw new Error('WebGPU is not available in this browser');
   const adapter = await navigator.gpu.requestAdapter();
   const device = await adapter.requestDevice();
   const pipe = (code) => device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code }), entryPoint: 'main' } });
-  const pipes = { pre: pipe(PREPROCESS), fwd: pipe(FORWARD), bwd: pipe(BACKWARD), shape: pipe(SHAPE), adam: pipe(ADAM), stats: pipe(STATS) };
+  const pipes = { pre: pipe(PREPROCESS), fwd: pipe(FORWARD), bwd: pipe(BACKWARD), shape: pipe(SHAPE), adam: pipe(ADAM), stats: pipe(STATS), bin: pipe(BIN), sort: pipe(SORT) };
   const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
   const buffer = (bytes) => device.createBuffer({ size: Math.max(16, bytes), usage: STORAGE });
 
@@ -443,17 +520,28 @@ export async function createRenderer() {
     device.queue.writeBuffer(camBuf, 0, cameraUniform(cam, n));
     const sBuf = buffer(n * 48);
     run(pipes.pre, [camBuf, gBuf, sBuf], Math.ceil(n / 64));
-    const splats = await read(sBuf, n * 48);
-    const { list, ranges } = tileLists(splats, n, cam.width, cam.height);
-    const oBuf = buffer(list.length * 4);
-    device.queue.writeBuffer(oBuf, 0, list);
-    const rBuf = buffer(ranges.length * 4);
-    device.queue.writeBuffer(rBuf, 0, ranges);
+    const tiles = Math.ceil(cam.width / 16) * Math.ceil(cam.height / 16);
+    let oBuf, rBuf;
+    if (gpuTiles) {
+      const counts = buffer(tiles * 4);
+      oBuf = buffer(tiles * TILE_CAP * 4);
+      rBuf = buffer(tiles * 8);
+      run(pipes.bin, [camBuf, sBuf, counts, oBuf], Math.ceil(n / 64));
+      run(pipes.sort, [sBuf, counts, oBuf, rBuf], tiles);
+      counts.destroy();
+    } else {
+      const splats = await read(sBuf, n * 48);
+      const { list, ranges } = tileLists(splats, n, cam.width, cam.height);
+      oBuf = buffer(list.length * 4);
+      device.queue.writeBuffer(oBuf, 0, list);
+      rBuf = buffer(ranges.length * 4);
+      device.queue.writeBuffer(rBuf, 0, ranges);
+    }
     const pixels = cam.width * cam.height;
     const iBuf = buffer(pixels * 12);
     const stBuf = buffer(pixels * 8);
     run(pipes.fwd, [camBuf, sBuf, oBuf, iBuf, stBuf, rBuf], Math.ceil(cam.width / 8), Math.ceil(cam.height / 8));
-    return { camBuf, sBuf, oBuf, iBuf, stBuf, rBuf, pixels, visible: list.length };
+    return { camBuf, sBuf, oBuf, iBuf, stBuf, rBuf, pixels };
   }
 
   /** Renders the Gaussians from one camera; returns RGB floats (width * height * 3). */
