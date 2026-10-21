@@ -29,6 +29,9 @@
   #map { position: fixed; right: 16px; top: max(64px, calc(env(safe-area-inset-top) + 52px)); width: 132px; height: 132px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); display: none; }
   #status[hidden] { display: none; }
   #status { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
+  a.btn { font-weight: 600; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 8px 14px; min-height: 40px; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  a.btn[hidden] { display: none; }
+  .mark img { width: 30px; height: 30px; border-radius: 8px; object-fit: contain; background: #fff; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -53,6 +56,7 @@
     <button id="dollhouse" aria-pressed="true">Dollhouse</button>
     <button id="walk" aria-pressed="false">Walk through</button>
     <button id="photo" aria-pressed="false" hidden>Photoreal</button>
+    <a id="ar" class="btn" rel="ar" hidden><img alt="" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">View in AR</a>
   </div>
 </div>
 <script type="module">
@@ -81,6 +85,34 @@ const src = allowed(params.get('model')) || 'sample.glb';
 const splatSrc = allowed(params.get('splat'));
 const homeName = params.get('name');
 if (homeName) { document.getElementById('name').textContent = homeName; document.title = homeName + ' · Home Tour'; }
+
+// "View in AR": the home's USDZ in iPhone Quick Look, where the browser supports it.
+const usdz = allowed(params.get('usdz'));
+const arLink = document.getElementById('ar');
+if (usdz && arLink.relList?.supports?.('ar')) {
+  arLink.href = usdz;
+  arLink.hidden = false;
+}
+
+// A designer's tour (Pro) carries their name, contact line and logo in tour.json.
+const metaUrl = allowed(params.get('meta'));
+if (metaUrl) {
+  fetch(metaUrl).then((r) => (r.ok ? r.json() : null)).then((meta) => {
+    const brand = meta?.brand;
+    if (!brand?.name) return;
+    const line = document.querySelector('.title span');
+    line.textContent = brand.contact ? `${brand.name} · ${brand.contact}` : brand.name;
+    if (typeof brand.logo === 'string' && brand.logo.startsWith('data:image/')) {
+      const img = document.createElement('img');
+      img.src = brand.logo;
+      img.alt = brand.name;
+      const mark = document.querySelector('.mark');
+      mark.textContent = '';
+      mark.style.background = 'none';
+      mark.appendChild(img);
+    }
+  }).catch(() => {});
+}
 
 const canvas = document.getElementById('view');
 const mapCanvas = document.getElementById('map');
@@ -198,7 +230,10 @@ function loadModel(modelUrl, splat) {
   const look = center.clone().sub(walkCam.position);
   if (look.lengthSq() > 0.25) yaw = Math.atan2(-look.x, -look.z);
   status.hidden = true;
-  }, undefined, () => { status.hidden = false; status.textContent = 'This tour could not be loaded. Ask for a new link.'; });
+  }, (e) => {
+    // On a slow connection show how far the download is.
+    if (e.total) status.textContent = `Loading the 3D home… ${Math.round((e.loaded / e.total) * 100)}%`;
+  }, () => { status.hidden = false; status.textContent = 'This tour could not be loaded. Ask for a new link.'; });
 }
 // In the app (?app=1) the page waits for the home's own files instead of the sample.
 if (params.get('app') !== '1') loadModel(src, splatSrc ? { url: splatSrc, name: splatSrc } : null);
