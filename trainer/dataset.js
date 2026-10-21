@@ -1,6 +1,6 @@
 // Loads the iPhone's "Scan photos for photoreal 3D" zip (COLMAP text + JPEG photos)
 // into training views: a camera and the photo as RGB bytes at the training size.
-import { unzipSync } from 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js';
+import { unzipSync } from '../vendor/fflate/browser.js';
 import { parseCameras, parseImages, parsePoints, trainerCamera } from './colmap.js';
 
 const text = (bytes) => new TextDecoder().decode(bytes);
