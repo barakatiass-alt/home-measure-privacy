@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photoreal Trainer</title>
+<meta name="description" content="Turns a Home Measure scan into a photoreal 3D model, in your browser, on your own computer.">
+<style>
+  :root { --ink:#11262A; --muted:#5B6B6E; --accent:#0A766F; --card:#ffffff; --bg:#F4F7F6; --line:rgba(17,38,42,.12); --warn:#B45309; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ink:#E7EFEE; --muted:#9DB0AE; --card:#16262A; --bg:#0D1A1D; --line:rgba(255,255,255,.14); } }
+  :root[data-theme="dark"] { --ink:#E7EFEE; --muted:#9DB0AE; --card:#16262A; --bg:#0D1A1D; --line:rgba(255,255,255,.14); }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .mark { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); color: #fff; font-weight: 800; font-size: 13px; display: grid; place-items: center; }
+  h1 { font-size: 22px; margin: 0; }
+  .sub { color: var(--muted); margin: 0; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 14px; }
+  .drop { border: 2px dashed var(--line); border-radius: 14px; padding: 28px 16px; text-align: center; cursor: pointer; }
+  .drop.over { border-color: var(--accent); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  label { font-size: 14px; color: var(--muted); }
+  select, button { font: inherit; }
+  select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  button { border: 0; border-radius: 999px; padding: 10px 18px; font-weight: 600; background: var(--accent); color: #fff; cursor: pointer; min-height: 42px; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 10px 0 6px; }
+  .bar div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 13px; color: var(--muted); }
+  .stats b { display: block; color: var(--ink); font-size: 18px; }
+  canvas { width: 100%; max-width: 480px; border-radius: 10px; background: #000; display: block; margin-top: 12px; }
+  .warn { color: var(--warn); }
+  ol { padding-left: 20px; margin: 6px 0 0; }
+  a { color: var(--accent); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="mark">HM</div>
+    <div><h1>Photoreal Trainer</h1><p class="sub">Turns a Home Measure scan into a photoreal 3D model. Runs on this computer's graphics card. Nothing is uploaded.</p></div>
+  </header>
+
+  <div class="card">
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose the scan photos zip">
+      <b>Drop the scan photos zip here</b><br><span class="sub">From the app: Share, then "Scan photos for photoreal 3D"</span>
+      <input type="file" id="file" accept=".zip,application/zip" hidden>
+    </div>
+    <p class="warn" id="gpuWarn" hidden>This browser has no WebGPU. Use a recent Chrome or Edge.</p>
+  </div>
+
+  <div class="card" id="setup" hidden>
+    <p id="summary"></p>
+    <div class="row">
+      <label>Quality
+        <select id="steps">
+          <option value="2000">Quick preview (about 5 min)</option>
+          <option value="7000" selected>Good (about 20 to 40 min)</option>
+          <option value="15000">Best (about 1 hour or more)</option>
+        </select>
+      </label>
+      <label>Detail
+        <select id="width">
+          <option value="360">Lower (faster)</option>
+          <option value="480" selected>Normal</option>
+          <option value="640">Higher (slower)</option>
+        </select>
+      </label>
+      <button id="start">Start training</button>
+    </div>
+  </div>
+
+  <div class="card" id="run" hidden>
+    <div class="bar"><div id="progress"></div></div>
+    <div class="stats">
+      <div>Step<b id="step">0</b></div>
+      <div>Splats<b id="count">0</b></div>
+      <div>Difference to photos<b id="loss">–</b></div>
+    </div>
+    <canvas id="preview" width="480" height="360" aria-label="Preview of the model from the first photo's position"></canvas>
+    <div class="row" style="margin-top:12px">
+      <button class="secondary" id="stop">Stop and keep</button>
+      <button id="download" disabled>Download photoreal model (.ply)</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <b>Then</b>
+    <ol>
+      <li>Open the <a href="../tour/" target="_blank" rel="noopener">3D tour page</a>.</li>
+      <li>Drag the home's <b>.glb</b> (from Share, "3D for the web") and this <b>.ply</b> onto it together.</li>
+      <li>Use <b>Photoreal</b> and <b>Walk through</b>.</li>
+    </ol>
+  </div>
+</main>
+<script type="module">
+import { loadDataset } from './dataset.js';
+import { createRenderer, initFromPoints, toPly } from './gpu.js';
+
+const $ = (id) => document.getElementById(id);
+let dataset = null;
+let zipBytes = null;
+let trained = null;
+let stopping = false;
+let renderer = null;
+
+if (!navigator.gpu) $('gpuWarn').hidden = false;
+
+async function open(file) {
+  $('summary').textContent = 'Reading the photos…';
+  $('setup').hidden = false;
+  zipBytes = await file.arrayBuffer();
+  await prepare();
+}
+
+async function prepare() {
+  const width = Number($('width').value);
+  dataset = await loadDataset(zipBytes, { width, onProgress: (p) => ($('summary').textContent = `Reading the photos… ${Math.round(p * 100)}%`) });
+  $('summary').textContent = `${dataset.photoCount} photos (training on ${dataset.views.length}), ${dataset.points.count.toLocaleString()} starting points from the scan.`;
+}
+
+$('drop').onclick = () => $('file').click();
+$('drop').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') $('file').click(); };
+$('file').onchange = (e) => e.target.files[0] && open(e.target.files[0]).catch(fail);
+$('drop').ondragover = (e) => { e.preventDefault(); $('drop').classList.add('over'); };
+$('drop').ondragleave = () => $('drop').classList.remove('over');
+$('drop').ondrop = (e) => { e.preventDefault(); $('drop').classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) open(f).catch(fail); };
+$('width').onchange = () => zipBytes && prepare().catch(fail);
+
+function fail(e) { $('summary').textContent = e.message; $('setup').hidden = false; }
+
+function show(rgb, cam) {
+  const c = $('preview');
+  c.width = cam.width; c.height = cam.height;
+  const ctx = c.getContext('2d');
+  const im = ctx.createImageData(cam.width, cam.height);
+  for (let p = 0; p < cam.width * cam.height; p++) {
+    for (let ch = 0; ch < 3; ch++) im.data[p * 4 + ch] = Math.min(255, rgb[p * 3 + ch] * 255);
+    im.data[p * 4 + 3] = 255;
+  }
+  ctx.putImageData(im, 0, 0);
+}
+
+$('start').onclick = async () => {
+  if (!dataset) return;
+  $('start').disabled = true;
+  $('run').hidden = false;
+  stopping = false;
+  renderer = renderer ?? (await createRenderer());
+  const steps = Number($('steps').value);
+  const start = initFromPoints(dataset.points.count ? dataset.points : { xyz: Float32Array.from(dataset.views.flatMap(() => [0, 0, 0])), rgb: new Float32Array(dataset.views.length * 3).fill(0.7), count: dataset.views.length });
+  const preview = dataset.views[0].cam;
+  trained = await renderer.trainScene(start, dataset.views, {
+    steps,
+    densifyFrom: Math.round(steps * 0.07),
+    densifyUntil: Math.round(steps * 0.5),
+    shouldStop: () => stopping,
+    onProgress: async ({ step, loss, count }) => {
+      $('step').textContent = step.toLocaleString();
+      $('count').textContent = count.toLocaleString();
+      $('loss').textContent = Number.isFinite(loss) ? loss.toFixed(3) : '–';
+      $('progress').style.width = `${(step / steps) * 100}%`;
+    },
+  });
+  show(await renderer.render(trained, preview), preview);
+  $('progress').style.width = '100%';
+  $('download').disabled = false;
+  $('start').disabled = false;
+};
+
+$('stop').onclick = () => { stopping = true; };
+$('download').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(toPly(trained));
+  a.download = 'home-photoreal.ply';
+  a.click();
+};
+</script>
+</body>
+</html>
