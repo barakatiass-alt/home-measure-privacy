@@ -4,52 +4,102 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Home Measure: Privacy and Support</title>
+<meta name="description" content="Home Measure measures a whole home with your iPhone's LiDAR: floor plans, a 3D model and a PDF report. Privacy policy, plans and support.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <style>
-  :root { --bg: #F4F7F6; --ink: #11262A; --muted: #3F565A; --teal: #0A766F; --card: #FFFFFF; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #0B1416; --ink: #E6F0EE; --muted: #9DB4B1; --teal: #2BB3A7; --card: #152427; } }
+  :root { --bg: #F4F7F6; --ink: #11262A; --muted: #3F565A; --teal: #0A766F; --card: #FFFFFF; --line: rgba(17,38,42,.12); }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0B1416; --ink: #E6F0EE; --muted: #9DB4B1; --teal: #2BB3A7; --card: #152427; --line: rgba(255,255,255,.14); } }
+  * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
-  main { max-width: 680px; margin: 0 auto; padding: 32px 16px 64px; }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
   h1 { font-size: 30px; margin: 0 0 4px; }
-  h2 { font-size: 19px; margin: 28px 0 8px; }
+  h2 { font-size: 21px; margin: 0 0 8px; padding-top: 16px; }
+  h3 { font-size: 17px; margin: 18px 0 4px; }
+  p { margin: 6px 0; }
   .muted { color: var(--muted); }
-  .card { background: var(--card); border-radius: 16px; padding: 4px 20px 16px; margin-top: 20px; }
-  ul { padding-left: 20px; }
+  .card { background: var(--card); border-radius: 16px; padding: 4px 20px 18px; margin-top: 20px; }
+  nav { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+  ul { padding-left: 20px; margin: 6px 0; }
+  li { margin: 4px 0; }
   a { color: var(--teal); }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; }
+  .price { white-space: nowrap; font-weight: 600; }
 </style>
 </head>
 <body>
 <main>
   <h1>Home Measure</h1>
-  <p class="muted">Privacy policy and support. Last updated 20 October 2026.</p>
+  <p class="muted">Measure a whole home with your iPhone: floor plans, a 3D model you can walk through, and a PDF report. Last updated 21 October 2026.</p>
+  <nav aria-label="On this page"><a href="#plans">Plans</a><a href="#privacy">Privacy</a><a href="#support">Support</a><a href="#contact">Contact</a></nav>
 
-  <div class="card">
-    <h2>What the app collects</h2>
-    <p>Nothing. Home Measure has no accounts, no servers and no analytics.</p>
+  <section class="card" id="plans" aria-labelledby="plans-h">
+    <h2 id="plans-h">Plans</h2>
+    <p>Everything is bought in the app through the App Store. Prices are shown in your local currency in the app.</p>
+    <table>
+      <thead><tr><th scope="col">Plan</th><th scope="col">What you get</th></tr></thead>
+      <tbody>
+        <tr><td>Free</td><td>Measure one home. PDF report with a "Free version" mark.</td></tr>
+        <tr><td>Home Measure<br><span class="price">one payment</span></td><td>Unlimited homes, clean PDF report and floor plan sheet. 3D, walk-through, measuring and the photoreal model inside the app.</td></tr>
+        <tr><td>Plus<br><span class="price">monthly</span></td><td>Share up to 3 homes a month outside the app: 3D files, tour links and photoreal models.</td></tr>
+        <tr><td>Pro<br><span class="price">monthly</span></td><td>Unlimited sharing, plus designer tools: DXF floor plan for AutoCAD and SketchUp, wall elevations, empty-room view, notes on the model, your logo on reports.</td></tr>
+        <tr><td>Single export</td><td>Share one home outside the app once.</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">Monthly plans renew automatically until you cancel them in your Apple ID settings (Settings, your name, Subscriptions) at least 24 hours before the renewal date.</p>
+  </section>
+
+  <section class="card" id="privacy" aria-labelledby="privacy-h">
+    <h2 id="privacy-h">Privacy policy</h2>
+    <p>Home Measure has no accounts, no analytics, no ads and no tracking. Your homes stay on your iPhone.</p>
+
+    <h3>On your iPhone</h3>
     <ul>
       <li>Camera and LiDAR data are processed on your iPhone by Apple's RoomPlan framework.</li>
-      <li>If &ldquo;Save photos for realistic 3D&rdquo; is on (Settings, on by default), the app keeps some camera images from each scan on your iPhone to colour the 3D model with your real walls and floors. They never leave your iPhone unless you share the 3D model yourself, and they are deleted with the home. Turn the setting off to keep no images.</li>
-      <li>Homes, rooms, measurements, floor plans and reports are saved only on your iPhone, in the app's own storage.</li>
+      <li>Homes, rooms, measurements, floor plans and reports are saved only in the app's own storage on your iPhone.</li>
+      <li>If "Save photos for realistic 3D" is on (Settings, on by default), the app keeps some camera images from each scan on your iPhone to colour the 3D model with your real walls and floors. The photo pass for the photoreal model saves more of them. They are deleted with the home. Turn the setting off to keep no images.</li>
       <li>To line up rooms you scan at different times, the app keeps an AR world map of the home (feature points, no photos) on your iPhone for up to 12 hours. It is deleted with the home.</li>
-      <li>Sharing is always your choice. PDFs, 3D files and the scan photo zip leave your iPhone only when you share them.</li>
-      <li>If you create a 3D tour link, the 3D model of the home (with photo textures of the walls and floors when realistic 3D is on) is uploaded to a storage service. Anyone with the link can view it. The app asks before it creates one, and the link uses a random 20-character address that cannot be guessed.</li>
-      <li>Training and viewing the photoreal model inside the app use our web pages (the trainer and the 3D tour), loaded in the app. Your photos and models are handed to them on the iPhone and are not uploaded. On a computer, the trainer page runs in your browser and uploads nothing either. A photoreal model goes into a tour link only when you create one.</li>
+      <li>Training and viewing the photoreal model inside the app use our web pages (the trainer and the 3D tour on this site), loaded in the app. Your photos and models are handed to them on the iPhone and are not uploaded. On a computer, the trainer page runs in your browser and uploads nothing either.</li>
       <li>Your photo library is opened only when you choose a logo for your reports (Pro). Only the image you pick is used.</li>
       <li>The app does not use location, microphone, contacts or notifications.</li>
     </ul>
 
-    <h2>Sharing</h2>
-    <p>A report, 3D model or listing text leaves your iPhone only when you share it yourself through the iOS share sheet, to the app or person you choose.</p>
+    <h3>When you share</h3>
+    <ul>
+      <li>A report, floor plan, 3D file or listing text leaves your iPhone only when you share it yourself through the iOS share sheet, to the app or person you choose.</li>
+      <li><strong>Tour links.</strong> If you create a 3D tour link, the app asks first, then uploads the home's 3D model (with photo textures of the walls and floors when realistic 3D is on, and the photoreal model when you trained one) to our tour service, which stores it with Cloudflare. Anyone with the link can view the tour. The link uses a random 20-character address that cannot be guessed. Tours and their files are deleted after 12 months.</li>
+      <li>To check your plan, the app sends the tour service the App Store transaction ID of your purchase and a random id for the home. The service asks Apple whether the purchase is valid and keeps a count of the homes shared each month, deleted after 40 days. If you use a single export, it keeps a note that that purchase was used. None of this includes your name, Apple ID or payment details.</li>
+    </ul>
 
-    <h2>Deleting your data</h2>
-    <p>Delete a room or home inside the app, or delete the app to remove everything it stored.</p>
-  </div>
+    <h3>Purchases</h3>
+    <p>Payments are handled by Apple. We never see your payment details or your Apple ID.</p>
 
-  <div class="card">
-    <h2>Support</h2>
-    <p><strong>How accurate is it?</strong> Scanned rooms are typically within 1 to 2 percent. Rooms typed in by hand are less precise and show Medium confidence. This is a practical measurement of net internal area, not a legal or land survey.</p>
-    <p><strong>My iPhone has no LiDAR.</strong> Use "Add a room" to type in width and depth. The report works the same way.</p>
-    <p><strong>Tips for a good scan:</strong> turn on the lights, walk slowly along the walls, point at every corner, then tap Finish room.</p>
-  </div>
+    <h3>Deleting your data</h3>
+    <p>Delete a room or home inside the app, or delete the app to remove everything it stored on your iPhone. Tour links expire after 12 months; to remove one sooner, contact us with the link.</p>
+  </section>
+
+  <section class="card" id="support" aria-labelledby="support-h">
+    <h2 id="support-h">Support</h2>
+    <h3>Which iPhones can scan?</h3>
+    <p>iPhones with a LiDAR sensor: iPhone 12 Pro and later Pro models, on iOS 17 or later. On other iPhones, use "Add a room" to type in sizes. The report works the same way. Training the photoreal model on the iPhone needs iOS 26.</p>
+    <h3>How accurate is it?</h3>
+    <p>Scanned rooms are usually within 1 to 2 percent, and the report shows a likely range. Rooms typed in by hand are less precise and show Medium confidence. It is a practical measurement of net internal area, not a legal or land survey.</p>
+    <h3>Tips for a good scan</h3>
+    <p>Turn on the lights, walk slowly along the walls, point at every corner, and keep doors open between rooms when you scan the whole home in one go.</p>
+    <h3>Photoreal model</h3>
+    <p>After the scan, do the photo pass and follow the ring in the corner until it fills. Then train with the iPhone plugged in and the app open. It pauses by itself if the iPhone gets hot.</p>
+    <h3>I changed phones. How do I get my purchase back?</h3>
+    <p>Open Settings in the app, then your plan, and tap Restore purchases with the same Apple ID.</p>
+    <h3>How do I cancel Plus or Pro?</h3>
+    <p>iPhone Settings, your name, Subscriptions, Home Measure, Cancel subscription.</p>
+  </section>
+
+  <section class="card" id="contact" aria-labelledby="contact-h">
+    <h2 id="contact-h">Contact</h2>
+    <p>Questions, problems or a tour link to remove: use Settings, Support in the app, which opens an email to us.</p>
+  </section>
 </main>
 </body>
 </html>
