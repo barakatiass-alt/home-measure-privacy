@@ -201,6 +201,99 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   }
 }`;
 
+// The same backward pass, one workgroup per 16 x 16 tile. All pixels of a tile walk
+// the tile's list together (back to front), and each splat's contributions are first
+// summed across the subgroup, so a splat gets a handful of atomic adds per tile instead
+// of one per pixel. Needs the WebGPU "subgroups" feature; otherwise BACKWARD is used.
+const BACKWARD_SG = 'enable subgroups;\ndiagnostic(off, subgroup_uniformity);\n' + COMMON + /* wgsl */ `
+@group(0) @binding(0) var<uniform> cam: Camera;
+@group(0) @binding(1) var<storage, read> splats: array<f32>;
+@group(0) @binding(2) var<storage, read> order: array<u32>;
+@group(0) @binding(3) var<storage, read> image: array<f32>;
+@group(0) @binding(4) var<storage, read> state: array<f32>;
+@group(0) @binding(5) var<storage, read> targetImg: array<f32>;
+@group(0) @binding(6) var<storage, read_write> grads: array<atomic<u32>>;
+@group(0) @binding(7) var<storage, read> ranges: array<u32>;
+var<workgroup> lastAll: atomic<u32>;
+var<workgroup> startShared: u32;
+var<workgroup> endShared: u32;
+` + BLEND + /* wgsl */ `
+fn addF(i: u32, v: f32) {
+  if (v == 0.0) { return; }
+  var old = atomicLoad(&grads[i]);
+  loop {
+    let next = bitcast<u32>(bitcast<f32>(old) + v);
+    let r = atomicCompareExchangeWeak(&grads[i], old, next);
+    if (r.exchanged) { break; }
+    old = r.old_value;
+  }
+}
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) lid: vec3u, @builtin(local_invocation_index) li: u32) {
+  let w = u32(cam.size.x); let h = u32(cam.size.y);
+  let tile = wg.y * ((w + 15u) / 16u) + wg.x;
+  let x = wg.x * 16u + lid.x; let y = wg.y * 16u + lid.y;
+  let inside = x < w && y < h;
+  let px = f32(x) + 0.5; let py = f32(y) + 0.5;
+  let pix = y * w + x;
+  let n = f32(cam.pixels * 3u);
+  var T = 0.0;
+  var myLast = 0u;
+  var dL = vec3f(0.0);
+  if (inside) {
+    T = state[pix * 2u];
+    myLast = u32(state[pix * 2u + 1u]);
+    dL = vec3f(sign(image[pix * 3u] - targetImg[pix * 3u]), sign(image[pix * 3u + 1u] - targetImg[pix * 3u + 1u]), sign(image[pix * 3u + 2u] - targetImg[pix * 3u + 2u])) / n;
+  }
+  if (li == 0u) { atomicStore(&lastAll, 0u); startShared = ranges[tile * 2u]; }
+  workgroupBarrier();
+  atomicMax(&lastAll, myLast);
+  workgroupBarrier();
+  if (li == 0u) { endShared = max(atomicLoad(&lastAll), startShared); }
+  let start = workgroupUniformLoad(&startShared);
+  let end = workgroupUniformLoad(&endShared);
+  var behind = vec3f(0.0);
+  for (var k = end; k > start; k--) {
+    let gi = order[k - 1u];
+    let o = gi * 12u;
+    var g0 = 0.0; var g1 = 0.0; var g2 = 0.0; var g3 = 0.0;
+    var g4 = 0.0; var g5 = 0.0; var g6 = 0.0; var g7 = 0.0; var g8 = 0.0;
+    if (inside && k - 1u < myLast) {
+      let hit = alphaAt(o, px, py);
+      if (hit.w > 0.5) {
+        let alpha = hit.x;
+        let Tk = T / (1.0 - alpha);
+        let c = vec3f(splats[o + 8u], splats[o + 9u], splats[o + 10u]);
+        g0 = dL.x * alpha * Tk; g1 = dL.y * alpha * Tk; g2 = dL.z * alpha * Tk;
+        let dAlpha = dot(dL, Tk * c - behind / (1.0 - alpha));
+        behind += c * alpha * Tk;
+        T = Tk;
+        if (alpha < 0.99) {
+          let op = splats[o + 5u];
+          g3 = dAlpha * (alpha / op) * op * (1.0 - op);
+          let dPower = dAlpha * alpha;
+          let dx = hit.y; let dy = hit.z;
+          let A = splats[o + 2u]; let B = splats[o + 3u]; let C = splats[o + 4u];
+          g4 = dPower * (A * dx + B * dy);
+          g5 = dPower * (C * dy + B * dx);
+          g6 = dPower * -0.5 * dx * dx;
+          g7 = dPower * -dx * dy;
+          g8 = dPower * -0.5 * dy * dy;
+        }
+      }
+    }
+    let s0 = subgroupAdd(g0); let s1 = subgroupAdd(g1); let s2 = subgroupAdd(g2);
+    let s3 = subgroupAdd(g3); let s4 = subgroupAdd(g4); let s5 = subgroupAdd(g5);
+    let s6 = subgroupAdd(g6); let s7 = subgroupAdd(g7); let s8 = subgroupAdd(g8);
+    if (subgroupElect()) {
+      let b = gi * 16u;
+      addF(b, s0); addF(b + 1u, s1); addF(b + 2u, s2); addF(b + 3u, s3); addF(b + 4u, s4);
+      addF(b + 5u, s5); addF(b + 6u, s6); addF(b + 7u, s7); addF(b + 8u, s8);
+    }
+  }
+}`;
+
 // Chains each Gaussian's screen-space gradient to mean, log scale and rotation through
 // the projection's Jacobian, by central differences as the reference does.
 const SHAPE = COMMON + /* wgsl */ `
@@ -486,9 +579,11 @@ function cameraUniform(cam, count) {
 export async function createRenderer({ gpuTiles = true } = {}) {
   if (!navigator.gpu) throw new Error('WebGPU is not available in this browser');
   const adapter = await navigator.gpu.requestAdapter();
-  const device = await adapter.requestDevice();
+  // Subgroups make the backward pass much cheaper; older GPUs and browsers fall back.
+  const subgroups = adapter.features.has('subgroups');
+  const device = await adapter.requestDevice({ requiredFeatures: subgroups ? ['subgroups'] : [] });
   const pipe = (code) => device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code }), entryPoint: 'main' } });
-  const pipes = { pre: pipe(PREPROCESS), fwd: pipe(FORWARD), bwd: pipe(BACKWARD), shape: pipe(SHAPE), adam: pipe(ADAM), stats: pipe(STATS), bin: pipe(BIN), sort: pipe(SORT) };
+  const pipes = { pre: pipe(PREPROCESS), fwd: pipe(FORWARD), bwd: pipe(BACKWARD), bwdSg: subgroups ? pipe(BACKWARD_SG) : null, shape: pipe(SHAPE), adam: pipe(ADAM), stats: pipe(STATS), bin: pipe(BIN), sort: pipe(SORT) };
   const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
   const buffer = (bytes) => device.createBuffer({ size: Math.max(16, bytes), usage: STORAGE });
 
@@ -512,6 +607,12 @@ export async function createRenderer({ gpuTiles = true } = {}) {
     pass.dispatchWorkgroups(x, y);
     pass.end();
     device.queue.submit([enc.finish()]);
+  }
+
+  /** The backward pass: per tile with subgroup sums when available, else per pixel. */
+  function backward(buffers, cam) {
+    if (pipes.bwdSg) run(pipes.bwdSg, buffers, Math.ceil(cam.width / 16), Math.ceil(cam.height / 16));
+    else run(pipes.bwd, buffers, Math.ceil(cam.width / 8), Math.ceil(cam.height / 8));
   }
 
   /** Projects, sorts (on the CPU for now) and blends: the forward pass. */
@@ -564,7 +665,7 @@ export async function createRenderer({ gpuTiles = true } = {}) {
     const tBuf = buffer(f.pixels * 12);
     device.queue.writeBuffer(tBuf, 0, Float32Array.from(target));
     const gradBuf = buffer(n * 64);
-    run(pipes.bwd, [f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, tBuf, gradBuf, f.rBuf], Math.ceil(cam.width / 8), Math.ceil(cam.height / 8));
+    backward([f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, tBuf, gradBuf, f.rBuf], cam);
     const shapeBuf = buffer(n * 40);
     run(pipes.shape, [f.camBuf, gBuf, gradBuf, shapeBuf], Math.ceil(n / 64));
     return { image: await read(f.iBuf, f.pixels * 12), grads: await read(gradBuf, n * 64), shape: await read(shapeBuf, n * 40) };
@@ -637,7 +738,7 @@ export async function createRenderer({ gpuTiles = true } = {}) {
       const tBuf = buffer(f.pixels * 12);
       device.queue.writeBuffer(tBuf, 0, Float32Array.from(view.image, (v) => v / 255));
       const gradBuf = buffer(n * 64);
-      run(pipes.bwd, [f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, tBuf, gradBuf, f.rBuf], Math.ceil(view.cam.width / 8), Math.ceil(view.cam.height / 8));
+      backward([f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, tBuf, gradBuf, f.rBuf], view.cam);
       const shapeBuf = buffer(n * 40);
       run(pipes.shape, [f.camBuf, gBuf, gradBuf, shapeBuf], Math.ceil(n / 64));
       const stepData = new ArrayBuffer(32);
