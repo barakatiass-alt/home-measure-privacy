@@ -615,21 +615,42 @@ export async function createRenderer({ gpuTiles = true } = {}) {
     else run(pipes.bwd, buffers, Math.ceil(cam.width / 8), Math.ceil(cam.height / 8));
   }
 
-  /** Projects, sorts (on the CPU for now) and blends: the forward pass. */
-  async function forward(gBuf, n, cam) {
-    const camBuf = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  // Buffers reused between training steps (grown when the splat count grows).
+  const pool = new Map();
+  function scratch(name, bytes, usage = STORAGE) {
+    const have = pool.get(name);
+    if (have && have.size >= bytes) return have;
+    have?.destroy();
+    const b = device.createBuffer({ size: Math.max(16, Math.ceil(bytes * 1.25 / 4) * 4), usage });
+    pool.set(name, b);
+    return b;
+  }
+  function clear(buf) {
+    const enc = device.createCommandEncoder();
+    enc.clearBuffer(buf);
+    device.queue.submit([enc.finish()]);
+  }
+
+  /**
+   * Projects, bins into tiles and blends: the forward pass. With `pooled`, the
+   * buffers are reused (training); otherwise fresh ones are made (one-off renders).
+   */
+  async function forward(gBuf, n, cam, pooled = false) {
+    const get = (name, bytes) => (pooled ? scratch(name, bytes) : buffer(bytes));
+    const camBuf = pooled ? scratch('cam', 80, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST) : device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(camBuf, 0, cameraUniform(cam, n));
-    const sBuf = buffer(n * 48);
+    const sBuf = get('splats', n * 48);
     run(pipes.pre, [camBuf, gBuf, sBuf], Math.ceil(n / 64));
     const tiles = Math.ceil(cam.width / 16) * Math.ceil(cam.height / 16);
     let oBuf, rBuf;
     if (gpuTiles) {
-      const counts = buffer(tiles * 4);
-      oBuf = buffer(tiles * TILE_CAP * 4);
-      rBuf = buffer(tiles * 8);
+      const counts = get('counts', tiles * 4);
+      if (pooled) clear(counts);
+      oBuf = get('lists', tiles * TILE_CAP * 4);
+      rBuf = get('ranges', tiles * 8);
       run(pipes.bin, [camBuf, sBuf, counts, oBuf], Math.ceil(n / 64));
       run(pipes.sort, [sBuf, counts, oBuf, rBuf], tiles);
-      counts.destroy();
+      if (!pooled) counts.destroy();
     } else {
       const splats = await read(sBuf, n * 48);
       const { list, ranges } = tileLists(splats, n, cam.width, cam.height);
@@ -639,8 +660,8 @@ export async function createRenderer({ gpuTiles = true } = {}) {
       device.queue.writeBuffer(rBuf, 0, ranges);
     }
     const pixels = cam.width * cam.height;
-    const iBuf = buffer(pixels * 12);
-    const stBuf = buffer(pixels * 8);
+    const iBuf = get('image', pixels * 12);
+    const stBuf = get('state', pixels * 8);
     run(pipes.fwd, [camBuf, sBuf, oBuf, iBuf, stBuf, rBuf], Math.ceil(cam.width / 8), Math.ceil(cam.height / 8));
     return { camBuf, sBuf, oBuf, iBuf, stBuf, rBuf, pixels };
   }
@@ -734,12 +755,13 @@ export async function createRenderer({ gpuTiles = true } = {}) {
     for (let t = 1; t <= steps; t++) {
       if (shouldStop?.()) break;
       const view = views[Math.floor(Math.random() * views.length)];
-      const f = await forward(gBuf, n, view.cam);
-      const tBuf = buffer(f.pixels * 12);
+      const f = await forward(gBuf, n, view.cam, true);
+      const tBuf = scratch('target', f.pixels * 12);
       device.queue.writeBuffer(tBuf, 0, Float32Array.from(view.image, (v) => v / 255));
-      const gradBuf = buffer(n * 64);
+      const gradBuf = scratch('grads', n * 64);
+      clear(gradBuf);
       backward([f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, tBuf, gradBuf, f.rBuf], view.cam);
-      const shapeBuf = buffer(n * 40);
+      const shapeBuf = scratch('shape', n * 40);
       run(pipes.shape, [f.camBuf, gBuf, gradBuf, shapeBuf], Math.ceil(n / 64));
       const stepData = new ArrayBuffer(32);
       new Float32Array(stepData).set([t, 0, lr.color, lr.opacity, lr.mean, lr.scale, lr.rotation, 0]);
@@ -754,7 +776,6 @@ export async function createRenderer({ gpuTiles = true } = {}) {
         lossSum += loss / image.length;
         lossCount++;
       }
-      for (const b of [f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, f.rBuf, tBuf, gradBuf, shapeBuf]) b.destroy();
       if (t >= densifyFrom && t <= densifyUntil && t % densifyEvery === 0) {
         // 3DGS sets its threshold (0.0002) on gradients in NDC units; ours are per pixel.
         const gradThreshold = 2e-4 / (0.5 * views[0].cam.width);
