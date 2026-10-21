@@ -191,7 +191,33 @@ function loadModel(modelUrl, splat) {
   status.hidden = true;
   }, undefined, () => { status.hidden = false; status.textContent = 'This tour could not be loaded. Ask for a new link.'; });
 }
-loadModel(src, splatSrc ? { url: splatSrc, name: splatSrc } : null);
+// In the app (?app=1) the page waits for the home's own files instead of the sample.
+if (params.get('app') !== '1') loadModel(src, splatSrc ? { url: splatSrc, name: splatSrc } : null);
+
+// The Home Measure app shows a home's files from the iPhone here (ModelWebView.swift):
+// it sends each file as base64 chunks with hmReceive(name, data), then calls hmShow().
+const incoming = new Map();
+window.hmReceive = (name, b64) => {
+  const s = atob(b64);
+  const bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+  if (!incoming.has(name)) incoming.set(name, []);
+  incoming.get(name).push(bytes);
+  return incoming.get(name).length;
+};
+window.hmShow = (title) => {
+  const file = (re) => {
+    const name = [...incoming.keys()].find((n) => re.test(n));
+    return name ? { url: URL.createObjectURL(new Blob(incoming.get(name))), name } : null;
+  };
+  const glb = file(/\.glb$/i);
+  const splat = file(/\.(ply|splat|ksplat)$/i);
+  incoming.clear();
+  if (title) document.getElementById('name').textContent = title;
+  if (glb) loadModel(glb.url, splat);
+  return glb ? 1 : 0;
+};
+window.webkit?.messageHandlers?.hm?.postMessage({ type: 'ready' });
 
 // Files dropped on the page (a .glb and optionally a .ply/.splat/.ksplat trained on a
 // computer) open right here, without uploading them anywhere.
