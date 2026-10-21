@@ -20,9 +20,10 @@
 //   app -> page: hmReceive(base64) for each chunk of the scan photos zip, then
 //                hmStart({ steps, width, maxSplats }); hmPause(true|false); hmStop().
 //   page -> app: { type: 'ready' | 'loading' | 'progress' | 'ply' | 'done' | 'error', ... }
+// The model comes back in the compact .splat format (the 'ply' messages keep their name).
 // In a normal browser the messages go to window.hmTestSink (for the test page).
 import { loadDataset } from './dataset.js';
-import { createRenderer, initFromPoints, toPly } from './gpu.js';
+import { createRenderer, initFromPoints, toSplat } from './gpu.js';
 
 const post = (m) => (window.webkit?.messageHandlers?.hm ? window.webkit.messageHandlers.hm.postMessage(m) : window.hmTestSink?.(m));
 const $ = (id) => document.getElementById(id);
@@ -83,13 +84,13 @@ window.hmStart = async ({ steps = 3000, width = 360, maxSplats = 150000 } = {}) 
       },
     });
     show(await renderer.render(trained, data.views[0].cam), data.views[0].cam);
-    const ply = new Uint8Array(await toPly(trained).arrayBuffer());
+    const ply = new Uint8Array(await toSplat(trained).arrayBuffer());
     const CHUNK = 1 << 20;
     for (let i = 0; i < ply.length; i += CHUNK) {
       post({ type: 'ply', data: toBase64(ply.subarray(i, i + CHUNK)), last: i + CHUNK >= ply.length });
     }
     $('state').textContent = 'Done.';
-    post({ type: 'done', splats: trained.length, bytes: ply.length });
+    post({ type: 'done', splats: ply.length / 32, bytes: ply.length });
   } catch (e) {
     $('state').textContent = e.message;
     post({ type: 'error', message: String(e.message ?? e) });

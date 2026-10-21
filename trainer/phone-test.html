@@ -10,6 +10,14 @@ import { zipSync, strToU8 } from '../vendor/fflate/browser.js';
 import { createRenderer, fromPly } from './gpu.js';
 const out = document.getElementById('out');
 const W = 240, H = 180;
+/** Rotation matrix (rows) to a COLMAP quaternion (w, x, y, z), any rotation. */
+function quat([[m00, m01, m02], [m10, m11, m12], [m20, m21, m22]]) {
+  const tr = m00 + m11 + m22;
+  if (tr > 0) { const s = Math.sqrt(tr + 1) * 2; return [0.25 * s, (m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s]; }
+  if (m00 > m11 && m00 > m22) { const s = Math.sqrt(1 + m00 - m11 - m22) * 2; return [(m21 - m12) / s, 0.25 * s, (m01 + m10) / s, (m02 + m20) / s]; }
+  if (m11 > m22) { const s = Math.sqrt(1 + m11 - m00 - m22) * 2; return [(m02 - m20) / s, (m01 + m10) / s, 0.25 * s, (m12 + m21) / s]; }
+  const s = Math.sqrt(1 + m22 - m00 - m11) * 2; return [(m10 - m01) / s, (m02 + m20) / s, (m12 + m21) / s, 0.25 * s];
+}
 const frame = document.getElementById('page');
 await new Promise((r) => (frame.onload = r));
 const page = frame.contentWindow;
@@ -44,9 +52,7 @@ try {
     ctx.putImageData(im, 0, 0);
     const name = `f${k}.jpg`;
     files[`x/images/${name}`] = new Uint8Array(await (await c.convertToBlob({ type: 'image/jpeg', quality: 0.9 })).arrayBuffer());
-    const [[m00, m01, m02], [m10, m11, m12], [m20, m21, m22]] = R;
-    const s = Math.sqrt(1 + m00 + m11 + m22) * 2;
-    const q = [0.25 * s, (m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s];
+    const q = quat(R);
     cameras += `${k + 1} PINHOLE ${W} ${H} 150 150 ${W / 2} ${H / 2}\n`;
     images += `${k + 1} ${q.join(' ')} ${t.join(' ')} ${k + 1} ${name}\n\n`;
   }
@@ -64,8 +70,11 @@ try {
   const end = await done;
   const bin = atob(ply.join(''));
   const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const back = end.type === 'done' ? fromPly(bytes.buffer) : [];
-  window.result = { end, chunks: ply.length, plyBytes: bytes.length, splatsBack: back.length, messages: messages.filter((m) => !m.startsWith('progress')).concat(messages.filter((m) => m.startsWith('progress')).length + ' progress') };
+  // .splat: 32 bytes a splat; check the first one decodes to sane values.
+  const f = new Float32Array(bytes.buffer, 0, 8);
+  const q = [...bytes.subarray(28, 32)].map((v) => (v - 128) / 128);
+  const back = { count: bytes.length / 32, firstScale: [f[3], f[4], f[5]], firstAlpha: bytes[27], rotationLength: Math.hypot(...q) };
+  window.result = { end, chunks: ply.length, plyBytes: bytes.length, splatsBack: back, messages: messages.filter((m) => !m.startsWith('progress')).concat(messages.filter((m) => m.startsWith('progress')).length + ' progress') };
 } catch (e) { window.result = { error: e.message }; }
 out.textContent = JSON.stringify(window.result, null, 2);
 </script>

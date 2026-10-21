@@ -450,14 +450,41 @@ export function toPly(gaussians) {
   return new Blob([header, body.buffer], { type: 'application/octet-stream' });
 }
 
+/**
+ * The compact .splat format (32 bytes a splat instead of 68 in .ply): position and
+ * scale as floats, colour and opacity as bytes, rotation as 4 bytes. Largest and most
+ * opaque first, as viewers expect. Read by the tour page's splat viewer.
+ */
+export function toSplat(all) {
+  // A splat with a non-finite value would break the viewer's sort; leave it out.
+  const gaussians = all.filter((g) => [...g.mean, ...g.logScale, g.opacityLogit, ...g.rotation, ...g.color].every(Number.isFinite));
+  const weight = (g) => Math.exp(g.logScale[0] + g.logScale[1] + g.logScale[2]) / (1 + Math.exp(-g.opacityLogit));
+  const order = gaussians.map((g, i) => [weight(g), i]).sort((a, b) => b[0] - a[0]);
+  const out = new ArrayBuffer(gaussians.length * 32);
+  const f = new Float32Array(out);
+  const u = new Uint8Array(out);
+  const byte = (v) => Math.max(0, Math.min(255, Math.round(v)));
+  order.forEach(([, i], k) => {
+    const g = gaussians[i];
+    f.set([...g.mean, ...g.logScale.map(Math.exp)], k * 8);
+    const q = g.rotation;
+    const len = Math.hypot(...q) || 1;
+    u.set([...g.color.map((c) => byte(c * 255)), byte(255 / (1 + Math.exp(-g.opacityLogit))), ...q.map((v) => byte((v / len) * 128 + 128))], k * 32 + 24);
+  });
+  return new Blob([out], { type: 'application/octet-stream' });
+}
+
 /** Same rules as densifyAndPrune() in reference.ts. */
 export function densify(gaussians, stats, { gradThreshold = 2e-4, sizeThreshold = 0.1, minOpacity = 0.005, maxCount = 400000 } = {}) {
   const out = [];
   const sig = (x) => 1 / (1 + Math.exp(-x));
+  // Each clone or split adds one splat; stop adding once the total would pass maxCount.
+  let room = maxCount - gaussians.length;
   gaussians.forEach((g, i) => {
     if (sig(g.opacityLogit) < minOpacity) return;
     const avg = stats[i * 2 + 1] ? stats[i * 2] / stats[i * 2 + 1] : 0;
-    if (avg < gradThreshold || out.length > maxCount) return void out.push(g);
+    if (avg < gradThreshold || room <= 0) return void out.push(g);
+    room--;
     const size = Math.max(...g.logScale.map(Math.exp));
     if (size <= sizeThreshold) {
       out.push(g, structuredClone(g));
