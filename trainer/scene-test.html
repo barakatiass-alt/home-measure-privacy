@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Scene training check</title>
+<style>body{font:14px/1.4 -apple-system,Segoe UI,Arial,sans-serif;margin:16px;color:#11262A;background:#fff}canvas{width:320px;margin-right:8px;border:1px solid #ddd}</style>
+</head>
+<body>
+<h1 style="font-size:18px">Scene training: photos of the sample home from 24 viewpoints</h1>
+<pre id="out">running…</pre>
+<canvas id="truth" width="240" height="180"></canvas><canvas id="start" width="240" height="180"></canvas><canvas id="heldTruth" width="240" height="180"></canvas><canvas id="heldTrained" width="240" height="180"></canvas><canvas id="trained" width="240" height="180"></canvas>
+<script type="module">
+import { createRenderer, fromPly } from './gpu.js';
+const out = document.getElementById('out');
+const W = 240, H = 180;
+
+/** Pinhole camera at `eye` looking at `at` (COLMAP axes: x right, y down, z forward). */
+function lookAt(eye, at) {
+  const f = at.map((v, i) => v - eye[i]); const fl = Math.hypot(...f); f.forEach((v, i) => (f[i] = v / fl));
+  const up = [0, 1, 0];
+  let r = [f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2], f[0] * up[1] - f[1] * up[0]];
+  const rl = Math.hypot(...r); r = r.map((v) => v / rl);
+  const d = [f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]];
+  const t = [r, d, f].map((row) => -(row[0] * eye[0] + row[1] * eye[1] + row[2] * eye[2]));
+  return { view: [...r, t[0], ...d, t[1], ...f, t[2]], fx: 150, fy: 150, cx: W / 2, cy: H / 2, width: W, height: H };
+}
+
+/** PSNR and mean SSIM (7x7 windows) of a render (0..1) against a photo (0..255). */
+function quality(img, photo) {
+  let se = 0;
+  for (let i = 0; i < img.length; i++) se += (Math.min(1, img[i]) - photo[i] / 255) ** 2;
+  let ssim = 0, n = 0;
+  for (let cy = 3; cy + 3 < H; cy += 2) for (let cx = 3; cx + 3 < W; cx += 2) for (let c = 0; c < 3; c++) {
+    let mx = 0, my = 0, sxx = 0, syy = 0, sxy = 0;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      const q = ((cy + dy) * W + cx + dx) * 3 + c;
+      const x = Math.min(1, img[q]), y = photo[q] / 255;
+      mx += x; my += y; sxx += x * x; syy += y * y; sxy += x * y;
+    }
+    mx /= 49; my /= 49; sxx /= 49; syy /= 49; sxy /= 49;
+    ssim += ((2 * mx * my + 1e-4) * (2 * (sxy - mx * my) + 9e-4)) / ((mx * mx + my * my + 1e-4) * (sxx - mx * mx + syy - my * my + 9e-4));
+    n++;
+  }
+  return { psnr: 10 * Math.log10(img.length / se), ssim: ssim / n };
+}
+
+function draw(id, rgb) {
+  const c = document.getElementById(id).getContext('2d');
+  const im = c.createImageData(W, H);
+  for (let p = 0; p < W * H; p++) { for (let ch = 0; ch < 3; ch++) im.data[p * 4 + ch] = rgb[p * 3 + ch] > 1 ? rgb[p * 3 + ch] : rgb[p * 3 + ch] * 255; im.data[p * 4 + 3] = 255; }
+  c.putImageData(im, 0, 0);
+}
+
+try {
+  const r = await createRenderer();
+  const truth = fromPly(await (await fetch('../tour/sample.ply')).arrayBuffer());
+  const centre = [5.5, 1.3, 3];
+  const views = [];
+  // Views between the training ones, never trained on, to measure the result.
+  const heldOut = [];
+  for (let k = 0; k < 4; k++) {
+    const a = ((k * 6 + 3.5) / 24) * Math.PI * 2;
+    const eye = [centre[0] + Math.cos(a) * 2.5, 1.55, centre[2] + Math.sin(a) * 1.5];
+    const cam = lookAt(eye, [centre[0] - Math.cos(a) * 3, 1.0, centre[2] - Math.sin(a) * 2]);
+    heldOut.push({ cam, image: Uint8Array.from(await r.render(truth, cam), (v) => Math.round(Math.min(1, v) * 255)) });
+  }
+  const ssimWeight = Number(new URLSearchParams(location.search).get('ssim') ?? 0);
+  const prune = new URLSearchParams(location.search).get('prune') === '1';
+  const opacityReset = new URLSearchParams(location.search).get('reset') === '1';
+  const steps = Number(new URLSearchParams(location.search).get('steps') ?? 800);
+  for (let k = 0; k < 24; k++) {
+    const a = (k / 24) * Math.PI * 2;
+    const eye = [centre[0] + Math.cos(a) * 2.5, 1.4 + (k % 3) * 0.3, centre[2] + Math.sin(a) * 1.5];
+    const cam = lookAt(eye, [centre[0] - Math.cos(a) * 3, 1.0, centre[2] - Math.sin(a) * 2]);
+    const img = await r.render(truth, cam);
+    views.push({ cam, image: Uint8Array.from(img, (v) => Math.round(Math.min(1, v) * 255)) });
+  }
+  // Start like the iPhone export does: sparse grey points, small and faint.
+  const start = truth.filter((_, i) => i % 4 === 0).map((g) => ({
+    mean: g.mean.map((m) => m + (Math.random() - 0.5) * 0.08),
+    logScale: [Math.log(0.06), Math.log(0.06), Math.log(0.06)],
+    rotation: [1, 0, 0, 0],
+    opacityLogit: Math.log(0.1 / 0.9),
+    color: [0.78, 0.78, 0.78],
+  }));
+  draw('truth', views[0].image);
+  draw('start', await r.render(start, views[0].cam));
+  const t0 = performance.now();
+  const progress = [];
+  const trained = await r.trainScene(start, views, { steps, ssim: ssimWeight, prune, opacityReset, densifyFrom: Math.round(steps / 4), densifyUntil: Math.round(steps * 0.75), onProgress: (p) => { progress.push(p); out.textContent = JSON.stringify(p); } });
+  const img = await r.render(trained, views[0].cam);
+  draw('trained', img);
+  let loss = 0;
+  for (let i = 0; i < img.length; i++) loss += Math.abs(img[i] - views[0].image[i] / 255);
+  const result = { firstLoss: progress[0].loss, lastLoss: progress[progress.length - 1].loss, view0Loss: loss / img.length, startCount: start.length, endCount: trained.length, msPerStep: (performance.now() - t0) / steps };
+  const scores = [];
+  for (const v of heldOut) scores.push(quality(await r.render(trained, v.cam), v.image));
+  const seen = quality(img, views[0].image);
+  draw('heldTruth', heldOut[0].image);
+  draw('heldTrained', await r.render(trained, heldOut[0].cam));
+  Object.assign(result, {
+    ssimWeight,
+    trainViewPsnr: seen.psnr, trainViewSsim: seen.ssim,
+    heldOutPsnr: scores.reduce((a, q) => a + q.psnr, 0) / scores.length,
+    heldOutSsim: scores.reduce((a, q) => a + q.ssim, 0) / scores.length,
+  });
+  window.result = result;
+  out.textContent = JSON.stringify(window.result, null, 2);
+} catch (e) { out.textContent = 'ERROR ' + e.message + '\n' + e.stack; window.result = { error: e.message }; }
+</script>
+</body>
+</html>

@@ -138,9 +138,8 @@ const BACKWARD = COMMON + /* wgsl */ `
 @group(0) @binding(0) var<uniform> cam: Camera;
 @group(0) @binding(1) var<storage, read> splats: array<f32>;
 @group(0) @binding(2) var<storage, read> order: array<u32>;
-@group(0) @binding(3) var<storage, read> image: array<f32>;
 @group(0) @binding(4) var<storage, read> state: array<f32>;
-@group(0) @binding(5) var<storage, read> targetImg: array<f32>;
+@group(0) @binding(5) var<storage, read> lossGrad: array<f32>;
 @group(0) @binding(6) var<storage, read_write> grads: array<atomic<u32>>;
 @group(0) @binding(7) var<storage, read> ranges: array<u32>;
 ` + BLEND + /* wgsl */ `
@@ -161,9 +160,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   if (id.x >= w || id.y >= h) { return; }
   let pix = id.y * w + id.x;
   let px = f32(id.x) + 0.5; let py = f32(id.y) + 0.5;
-  let n = f32(cam.pixels * 3u);
-  // L1 loss gradient for this pixel.
-  let dL = vec3f(sign(image[pix * 3u] - targetImg[pix * 3u]), sign(image[pix * 3u + 1u] - targetImg[pix * 3u + 1u]), sign(image[pix * 3u + 2u] - targetImg[pix * 3u + 2u])) / n;
+  // Loss gradient for this pixel (from the LOSS_GRAD pass).
+  let dL = vec3f(lossGrad[pix * 3u], lossGrad[pix * 3u + 1u], lossGrad[pix * 3u + 2u]);
   let tile = (id.y / 16u) * ((w + 15u) / 16u) + id.x / 16u;
   let start = ranges[tile * 2u];
   var T = state[pix * 2u];
@@ -209,9 +207,8 @@ const BACKWARD_SG = 'enable subgroups;\ndiagnostic(off, subgroup_uniformity);\n'
 @group(0) @binding(0) var<uniform> cam: Camera;
 @group(0) @binding(1) var<storage, read> splats: array<f32>;
 @group(0) @binding(2) var<storage, read> order: array<u32>;
-@group(0) @binding(3) var<storage, read> image: array<f32>;
 @group(0) @binding(4) var<storage, read> state: array<f32>;
-@group(0) @binding(5) var<storage, read> targetImg: array<f32>;
+@group(0) @binding(5) var<storage, read> lossGrad: array<f32>;
 @group(0) @binding(6) var<storage, read_write> grads: array<atomic<u32>>;
 @group(0) @binding(7) var<storage, read> ranges: array<u32>;
 var<workgroup> lastAll: atomic<u32>;
@@ -237,14 +234,13 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) lid: vec
   let inside = x < w && y < h;
   let px = f32(x) + 0.5; let py = f32(y) + 0.5;
   let pix = y * w + x;
-  let n = f32(cam.pixels * 3u);
   var T = 0.0;
   var myLast = 0u;
   var dL = vec3f(0.0);
   if (inside) {
     T = state[pix * 2u];
     myLast = u32(state[pix * 2u + 1u]);
-    dL = vec3f(sign(image[pix * 3u] - targetImg[pix * 3u]), sign(image[pix * 3u + 1u] - targetImg[pix * 3u + 1u]), sign(image[pix * 3u + 2u] - targetImg[pix * 3u + 2u])) / n;
+    dL = vec3f(lossGrad[pix * 3u], lossGrad[pix * 3u + 1u], lossGrad[pix * 3u + 2u]);
   }
   if (li == 0u) { atomicStore(&lastAll, 0u); startShared = ranges[tile * 2u]; }
   workgroupBarrier();
@@ -330,6 +326,86 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 }`;
 
 // Adam on all 14 trainable numbers of each Gaussian, with the reference's learning rates.
+// Loss = (1 - lambda) * L1 + lambda * (1 - SSIM), as in 3D Gaussian Splatting, with
+// SSIM over 7x7 windows that lie inside the image. SSIM_COEF writes, per window
+// centre and channel, the derivatives of that window's SSIM by its mean, mean of
+// squares and mean of products; LOSS_GRAD sums them over the windows covering each
+// pixel to get dLoss/dPixel. lambda = 0 gives plain L1.
+const SSIM_COEF = COMMON + /* wgsl */ `
+@group(0) @binding(0) var<uniform> cam: Camera;
+@group(0) @binding(1) var<storage, read> image: array<f32>;
+@group(0) @binding(2) var<storage, read> targetImg: array<f32>;
+@group(0) @binding(3) var<storage, read_write> coef: array<f32>;
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  let w = u32(cam.size.x); let h = u32(cam.size.y);
+  if (id.x >= w || id.y >= h) { return; }
+  let pix = id.y * w + id.x;
+  let inside = id.x >= 3u && id.y >= 3u && id.x + 3u < w && id.y + 3u < h;
+  for (var c = 0u; c < 3u; c++) {
+    var a = 0.0; var b = 0.0; var d = 0.0;
+    if (inside) {
+      var mx = 0.0; var my = 0.0; var sxx = 0.0; var syy = 0.0; var sxy = 0.0;
+      for (var dy = 0u; dy < 7u; dy++) {
+        for (var dx = 0u; dx < 7u; dx++) {
+          let q = ((id.y + dy - 3u) * w + id.x + dx - 3u) * 3u + c;
+          let x = image[q]; let y = targetImg[q];
+          mx += x; my += y; sxx += x * x; syy += y * y; sxy += x * y;
+        }
+      }
+      mx /= 49.0; my /= 49.0; sxx /= 49.0; syy /= 49.0; sxy /= 49.0;
+      let c1 = 0.0001; let c2 = 0.0009;
+      let a1 = 2.0 * mx * my + c1;
+      let a2 = 2.0 * (sxy - mx * my) + c2;
+      let b1 = mx * mx + my * my + c1;
+      let b2 = (sxx - mx * mx) + (syy - my * my) + c2;
+      let ssim = a1 * a2 / (b1 * b2);
+      a = ssim * (2.0 * my / a1 - 2.0 * my / a2 - 2.0 * mx / b1 + 2.0 * mx / b2);
+      b = -ssim / b2;
+      d = 2.0 * ssim / a2;
+    }
+    coef[pix * 9u + c * 3u] = a; coef[pix * 9u + c * 3u + 1u] = b; coef[pix * 9u + c * 3u + 2u] = d;
+  }
+}`;
+
+const LOSS_GRAD = COMMON + /* wgsl */ `
+struct LossParams { lambda: f32, windows: f32, pad0: f32, pad1: f32 };
+@group(0) @binding(0) var<uniform> cam: Camera;
+@group(0) @binding(1) var<storage, read> image: array<f32>;
+@group(0) @binding(2) var<storage, read> targetImg: array<f32>;
+@group(0) @binding(3) var<storage, read> coef: array<f32>;
+@group(0) @binding(4) var<storage, read_write> lossGrad: array<f32>;
+@group(0) @binding(5) var<uniform> params: LossParams;
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  let w = i32(cam.size.x); let h = i32(cam.size.y);
+  let x0 = i32(id.x); let y0 = i32(id.y);
+  if (x0 >= w || y0 >= h) { return; }
+  let pix = u32(y0 * w + x0);
+  let n = f32(cam.pixels * 3u);
+  for (var c = 0u; c < 3u; c++) {
+    let x = image[pix * 3u + c]; let y = targetImg[pix * 3u + c];
+    var g = (1.0 - params.lambda) * sign(x - y) / n;
+    if (params.lambda > 0.0 && params.windows > 0.0) {
+      var sa = 0.0; var sb = 0.0; var sd = 0.0;
+      for (var dy = -3; dy <= 3; dy++) {
+        for (var dx = -3; dx <= 3; dx++) {
+          let cx = x0 + dx; let cy = y0 + dy;
+          if (cx < 0 || cy < 0 || cx >= w || cy >= h) { continue; }
+          let k = u32(cy * w + cx) * 9u + c * 3u;
+          sa += coef[k]; sb += coef[k + 1u]; sd += coef[k + 2u];
+        }
+      }
+      // d(mean SSIM)/dx, and the loss uses 1 - SSIM.
+      let dSsim = (sa + 2.0 * x * sb + y * sd) / 49.0 / params.windows;
+      g -= params.lambda * dSsim;
+    }
+    lossGrad[pix * 3u + c] = g;
+  }
+}`;
+
 const ADAM = /* wgsl */ `
 struct Step { t: f32, count: u32, lrColor: f32, lrOpacity: f32, lrMean: f32, lrScale: f32, lrRotation: f32, pad: f32 };
 @group(0) @binding(0) var<uniform> step: Step;
@@ -475,13 +551,30 @@ export function toSplat(all) {
 }
 
 /** Same rules as densifyAndPrune() in reference.ts. */
-export function densify(gaussians, stats, { gradThreshold = 2e-4, sizeThreshold = 0.1, minOpacity = 0.005, maxCount = 400000 } = {}) {
+/**
+ * How far the cameras spread (3DGS's "scene extent"): 1.1 times the largest distance
+ * of a camera from their mean. Views carry world-to-camera rows (R | t), so a camera
+ * sits at -R^T t.
+ */
+export function sceneExtent(views) {
+  const centres = views.map(({ cam: { view: m } }) => [0, 1, 2].map((j) => -(m[j] * m[3] + m[4 + j] * m[7] + m[8 + j] * m[11])));
+  const mean = [0, 1, 2].map((j) => centres.reduce((a, c) => a + c[j], 0) / centres.length);
+  return 1.1 * Math.max(1e-3, ...centres.map((c) => Math.hypot(c[0] - mean[0], c[1] - mean[1], c[2] - mean[2])));
+}
+
+/**
+ * Adds splats where the image gradient is high (clone small ones, split large ones) and
+ * removes transparent ones and, with `maxSize`, ones larger than that in world units:
+ * those "floaters" explain the photos but cover every other viewpoint.
+ */
+export function densify(gaussians, stats, { gradThreshold = 2e-4, sizeThreshold = 0.1, minOpacity = 0.005, maxCount = 400000, maxSize = Infinity } = {}) {
   const out = [];
   const sig = (x) => 1 / (1 + Math.exp(-x));
   // Each clone or split adds one splat; stop adding once the total would pass maxCount.
   let room = maxCount - gaussians.length;
   gaussians.forEach((g, i) => {
     if (sig(g.opacityLogit) < minOpacity) return;
+    if (Math.max(...g.logScale.map(Math.exp)) > maxSize) return;
     const avg = stats[i * 2 + 1] ? stats[i * 2] / stats[i * 2 + 1] : 0;
     if (avg < gradThreshold || room <= 0) return void out.push(g);
     room--;
@@ -609,8 +702,9 @@ export async function createRenderer({ gpuTiles = true } = {}) {
   // Subgroups make the backward pass much cheaper; older GPUs and browsers fall back.
   const subgroups = adapter.features.has('subgroups');
   const device = await adapter.requestDevice({ requiredFeatures: subgroups ? ['subgroups'] : [] });
+  device.addEventListener('uncapturederror', (e) => console.error('WebGPU:', e.error.message));
   const pipe = (code) => device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code }), entryPoint: 'main' } });
-  const pipes = { pre: pipe(PREPROCESS), fwd: pipe(FORWARD), bwd: pipe(BACKWARD), bwdSg: subgroups ? pipe(BACKWARD_SG) : null, shape: pipe(SHAPE), adam: pipe(ADAM), stats: pipe(STATS), bin: pipe(BIN), sort: pipe(SORT) };
+  const pipes = { pre: pipe(PREPROCESS), fwd: pipe(FORWARD), bwd: pipe(BACKWARD), bwdSg: subgroups ? pipe(BACKWARD_SG) : null, shape: pipe(SHAPE), adam: pipe(ADAM), stats: pipe(STATS), bin: pipe(BIN), sort: pipe(SORT), ssim: pipe(SSIM_COEF), lossGrad: pipe(LOSS_GRAD) };
   const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
   const buffer = (bytes) => device.createBuffer({ size: Math.max(16, bytes), usage: STORAGE });
 
@@ -630,14 +724,33 @@ export async function createRenderer({ gpuTiles = true } = {}) {
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
     pass.setPipeline(p);
-    pass.setBindGroup(0, device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: buffers.map((b, binding) => ({ binding, resource: { buffer: b } })) }));
+    pass.setBindGroup(0, device.createBindGroup({ layout: p.getBindGroupLayout(0), entries: buffers.flatMap((b, binding) => (b ? [{ binding, resource: { buffer: b } }] : [])) }));
     pass.dispatchWorkgroups(x, y);
     pass.end();
     device.queue.submit([enc.finish()]);
   }
 
+  /**
+   * dLoss/dPixel for a rendered image against its photo: L1, plus SSIM with weight
+   * `lambda`. With `pooled`, the buffers are reused (training).
+   */
+  function lossGradient(f, targetBuf, cam, lambda, pooled = false) {
+    const get = (name, bytes, usage) => (pooled ? scratch(name, bytes, usage) : device.createBuffer({ size: Math.max(16, bytes), usage: usage ?? STORAGE }));
+    const coefBuf = get('ssimCoef', f.pixels * 36);
+    const gradOut = get('lossGrad', f.pixels * 12);
+    const paramBuf = get('lossParams', 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    const windows = Math.max(0, cam.width - 6) * Math.max(0, cam.height - 6) * 3;
+    device.queue.writeBuffer(paramBuf, 0, new Float32Array([lambda, windows, 0, 0]));
+    const x = Math.ceil(cam.width / 8), y = Math.ceil(cam.height / 8);
+    if (lambda > 0) run(pipes.ssim, [f.camBuf, f.iBuf, targetBuf, coefBuf], x, y);
+    run(pipes.lossGrad, [f.camBuf, f.iBuf, targetBuf, coefBuf, gradOut, paramBuf], x, y);
+    return { gradOut, temporary: pooled ? [] : [coefBuf, gradOut, paramBuf] };
+  }
+
   /** The backward pass: per tile with subgroup sums when available, else per pixel. */
   function backward(buffers, cam) {
+    // Slot 3 (the rendered image) is only read by the loss pass now.
+    buffers = buffers.map((b, i) => (i === 3 ? null : b));
     if (pipes.bwdSg) run(pipes.bwdSg, buffers, Math.ceil(cam.width / 16), Math.ceil(cam.height / 16));
     else run(pipes.bwd, buffers, Math.ceil(cam.width / 8), Math.ceil(cam.height / 8));
   }
@@ -705,7 +818,7 @@ export async function createRenderer({ gpuTiles = true } = {}) {
    * Forward and backward against a target image. Returns the image, the per-Gaussian
    * gradients (colour, opacity logit, screen) and the shape gradients (10 per Gaussian).
    */
-  async function gradients(gaussians, cam, target) {
+  async function gradients(gaussians, cam, target, ssim = 0) {
     const n = gaussians.length;
     const gBuf = buffer(n * 64);
     device.queue.writeBuffer(gBuf, 0, packGaussians(gaussians));
@@ -713,7 +826,8 @@ export async function createRenderer({ gpuTiles = true } = {}) {
     const tBuf = buffer(f.pixels * 12);
     device.queue.writeBuffer(tBuf, 0, Float32Array.from(target));
     const gradBuf = buffer(n * 64);
-    backward([f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, tBuf, gradBuf, f.rBuf], cam);
+    const lossOut = lossGradient(f, tBuf, cam, ssim);
+    backward([f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, lossOut.gradOut, gradBuf, f.rBuf], cam);
     const shapeBuf = buffer(n * 40);
     run(pipes.shape, [f.camBuf, gBuf, gradBuf, shapeBuf], Math.ceil(n / 64));
     return { image: await read(f.iBuf, f.pixels * 12), grads: await read(gradBuf, n * 64), shape: await read(shapeBuf, n * 40) };
@@ -740,7 +854,8 @@ export async function createRenderer({ gpuTiles = true } = {}) {
       const view = views[(t - 1) % views.length];
       const f = await forward(gBuf, n, view.cam);
       const gradBuf = buffer(n * 64);
-      run(pipes.bwd, [f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, targets[(t - 1) % views.length], gradBuf, f.rBuf], Math.ceil(view.cam.width / 8), Math.ceil(view.cam.height / 8));
+      const lossOut = lossGradient(f, targets[(t - 1) % views.length], view.cam, 0);
+      run(pipes.bwd, [f.camBuf, f.sBuf, f.oBuf, null, f.stBuf, lossOut.gradOut, gradBuf, f.rBuf], Math.ceil(view.cam.width / 8), Math.ceil(view.cam.height / 8));
       const shapeBuf = buffer(n * 40);
       run(pipes.shape, [f.camBuf, gBuf, gradBuf, shapeBuf], Math.ceil(n / 64));
       const stepData = new ArrayBuffer(32);
@@ -752,7 +867,7 @@ export async function createRenderer({ gpuTiles = true } = {}) {
       let loss = 0;
       for (let i = 0; i < image.length; i++) loss += Math.abs(image[i] - view.target[i]);
       losses.push(loss / image.length);
-      for (const b of [f.sBuf, f.oBuf, f.iBuf, f.stBuf, f.rBuf, gradBuf, shapeBuf]) b.destroy();
+      for (const b of [f.sBuf, f.oBuf, f.iBuf, f.stBuf, f.rBuf, gradBuf, shapeBuf, ...lossOut.temporary]) b.destroy();
     }
     return { gaussians: unpackGaussians(await read(gBuf, n * 64)), losses };
   }
@@ -763,10 +878,20 @@ export async function createRenderer({ gpuTiles = true } = {}) {
    * (step, loss, splat count). `shouldStop` ends early. Returns the trained splats.
    * Views hold a camera and an RGB Uint8 image (as decoded from the photos).
    */
-  async function trainScene(start, views, { steps = 3000, densifyEvery = 100, densifyFrom = 300, densifyUntil = 2000, maxSplats = 400000, onProgress, shouldStop, lr } = {}) {
+  // Defaults measured with scene-test.html (21 Oct, 800 steps, held-out views): splitting
+  // at 1 % of the scene extent raised held-out PSNR from about 8.5 to 10.8 dB. SSIM
+  // (+17 % time), pruning large splats and the opacity reset showed no gain there, so
+  // they are off; real photos may differ.
+  async function trainScene(start, views, { steps = 3000, densifyEvery = 100, densifyFrom = 300, densifyUntil = 2000, maxSplats = 400000, ssim = 0, prune = false, opacityReset = false, onProgress, shouldStop, lr } = {}) {
     lr = { color: 0.025, opacity: 0.05, mean: 0.002, scale: 0.005, rotation: 0.001, ...lr };
     let gaussians = start;
     let n = gaussians.length;
+    // 3DGS: split splats above 1 % of the scene extent, drop those above 10 %.
+    const extent = sceneExtent(views);
+    // 3DGS also lowers every opacity now and then while densifying: splats that matter
+    // recover, and haze in front of the cameras fades and is pruned. Here once, halfway.
+    const resetAt = opacityReset ? Math.round((densifyFrom + densifyUntil) / 2 / densifyEvery) * densifyEvery : -1;
+    const lowOpacity = Math.log(0.01 / 0.99);
     let gBuf, moments, statsBuf;
     const upload = () => {
       for (const b of [gBuf, moments, statsBuf]) b?.destroy();
@@ -787,7 +912,8 @@ export async function createRenderer({ gpuTiles = true } = {}) {
       device.queue.writeBuffer(tBuf, 0, Float32Array.from(view.image, (v) => v / 255));
       const gradBuf = scratch('grads', n * 64);
       clear(gradBuf);
-      backward([f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, tBuf, gradBuf, f.rBuf], view.cam);
+      const lossOut = lossGradient(f, tBuf, view.cam, ssim, true);
+      backward([f.camBuf, f.sBuf, f.oBuf, f.iBuf, f.stBuf, lossOut.gradOut, gradBuf, f.rBuf], view.cam);
       const shapeBuf = scratch('shape', n * 40);
       run(pipes.shape, [f.camBuf, gBuf, gradBuf, shapeBuf], Math.ceil(n / 64));
       const stepData = new ArrayBuffer(32);
@@ -806,7 +932,8 @@ export async function createRenderer({ gpuTiles = true } = {}) {
       if (t >= densifyFrom && t <= densifyUntil && t % densifyEvery === 0) {
         // 3DGS sets its threshold (0.0002) on gradients in NDC units; ours are per pixel.
         const gradThreshold = 2e-4 / (0.5 * views[0].cam.width);
-        gaussians = densify(unpackGaussians(await read(gBuf, n * 64)), await read(statsBuf, n * 8), { gradThreshold, maxCount: maxSplats });
+        gaussians = densify(unpackGaussians(await read(gBuf, n * 64)), await read(statsBuf, n * 8), { gradThreshold, maxCount: maxSplats, sizeThreshold: 0.01 * extent, maxSize: prune ? 0.1 * extent : Infinity });
+        if (t === resetAt) for (const g of gaussians) g.opacityLogit = Math.min(g.opacityLogit, lowOpacity);
         upload();
       }
       if (t % 50 === 0) {
@@ -822,7 +949,25 @@ export async function createRenderer({ gpuTiles = true } = {}) {
     return gaussians;
   }
 
-  return { device, render, gradients, train, trainScene };
+  /** dLoss/dPixel for an image and its photo (for checks against finite differences). */
+  async function lossGradientOf(image, target, width, height, lambda) {
+    const pixels = width * height;
+    const camData = new ArrayBuffer(80);
+    new Float32Array(camData).set([width, height], 16);
+    new Uint32Array(camData)[19] = pixels;
+    const camBuf = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(camBuf, 0, camData);
+    const iBuf = buffer(pixels * 12);
+    device.queue.writeBuffer(iBuf, 0, Float32Array.from(image));
+    const tBuf = buffer(pixels * 12);
+    device.queue.writeBuffer(tBuf, 0, Float32Array.from(target));
+    const loss = lossGradient({ camBuf, iBuf, pixels }, tBuf, { width, height }, lambda);
+    const out = await read(loss.gradOut, pixels * 12);
+    for (const b of [camBuf, iBuf, tBuf, ...loss.temporary]) b.destroy();
+    return out;
+  }
+
+  return { device, render, gradients, train, trainScene, lossGradientOf };
 }
 
 /** Reads a binary 3DGS .ply (as written by toPly, Brush or the reference tools). */
