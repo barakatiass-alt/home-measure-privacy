@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Phone bridge check</title></head>
+<body>
+<pre id="out">running…</pre>
+<iframe id="page" src="phone.html" width="360" height="320"></iframe>
+<script type="module">
+// Drives phone.html the way the app does: zip in base64 chunks, start, collect the .ply.
+import { zipSync, strToU8 } from '../vendor/fflate/browser.js';
+import { createRenderer, fromPly } from './gpu.js';
+const out = document.getElementById('out');
+const W = 240, H = 180;
+const frame = document.getElementById('page');
+await new Promise((r) => (frame.onload = r));
+const page = frame.contentWindow;
+const messages = [];
+const ply = [];
+let resolveDone;
+const done = new Promise((r) => (resolveDone = r));
+page.hmTestSink = (m) => {
+  if (m.type === 'ply') ply.push(m.data);
+  else messages.push(m.type === 'progress' ? `progress ${m.step}` : m.type);
+  if (m.type === 'done' || m.type === 'error') resolveDone(m);
+};
+try {
+  // Same synthetic scene as zip-test.html, 12 views round the sample splats.
+  const r = await createRenderer();
+  const truth = fromPly(await (await fetch('../tour/sample.ply')).arrayBuffer());
+  const files = {};
+  let cameras = '', images = '';
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2;
+    const eye = [5.5 + Math.cos(a) * 2.5, 1.5, 3 + Math.sin(a) * 1.5];
+    const at = [5.5 - Math.cos(a) * 3, 1.0, 3 - Math.sin(a) * 2];
+    const f = at.map((v, i) => v - eye[i]); const fl = Math.hypot(...f); f.forEach((v, i) => (f[i] = v / fl));
+    let rr = [-f[2], 0, f[0]]; const rl = Math.hypot(...rr); rr = rr.map((v) => v / rl);
+    const d = [f[1] * rr[2] - f[2] * rr[1], f[2] * rr[0] - f[0] * rr[2], f[0] * rr[1] - f[1] * rr[0]];
+    const R = [rr, d, f];
+    const t = R.map((row) => -(row[0] * eye[0] + row[1] * eye[1] + row[2] * eye[2]));
+    const cam = { view: [...R[0], t[0], ...R[1], t[1], ...R[2], t[2]], fx: 150, fy: 150, cx: W / 2, cy: H / 2, width: W, height: H };
+    const img = await r.render(truth, cam);
+    const c = new OffscreenCanvas(W, H); const ctx = c.getContext('2d'); const im = ctx.createImageData(W, H);
+    for (let p = 0; p < W * H; p++) { for (let ch = 0; ch < 3; ch++) im.data[p * 4 + ch] = Math.min(255, img[p * 3 + ch] * 255); im.data[p * 4 + 3] = 255; }
+    ctx.putImageData(im, 0, 0);
+    const name = `f${k}.jpg`;
+    files[`x/images/${name}`] = new Uint8Array(await (await c.convertToBlob({ type: 'image/jpeg', quality: 0.9 })).arrayBuffer());
+    const [[m00, m01, m02], [m10, m11, m12], [m20, m21, m22]] = R;
+    const s = Math.sqrt(1 + m00 + m11 + m22) * 2;
+    const q = [0.25 * s, (m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s];
+    cameras += `${k + 1} PINHOLE ${W} ${H} 150 150 ${W / 2} ${H / 2}\n`;
+    images += `${k + 1} ${q.join(' ')} ${t.join(' ')} ${k + 1} ${name}\n\n`;
+  }
+  files['x/sparse/0/cameras.txt'] = strToU8(cameras);
+  files['x/sparse/0/images.txt'] = strToU8(images);
+  files['x/sparse/0/points3D.txt'] = strToU8(truth.filter((_, i) => i % 4 === 0).map((g, i) => `${i + 1} ${g.mean.join(' ')} 200 200 200 0`).join('\n'));
+  const zip = zipSync(files);
+  // Base64 in 64 KB pieces, like the app's chunks.
+  for (let i = 0; i < zip.length; i += 65536) {
+    let s = ''; const part = zip.subarray(i, i + 65536);
+    for (let j = 0; j < part.length; j++) s += String.fromCharCode(part[j]);
+    page.hmReceive(btoa(s));
+  }
+  page.hmStart({ steps: 300, width: W, maxSplats: 5000 });
+  const end = await done;
+  const bin = atob(ply.join(''));
+  const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const back = end.type === 'done' ? fromPly(bytes.buffer) : [];
+  window.result = { end, chunks: ply.length, plyBytes: bytes.length, splatsBack: back.length, messages: messages.filter((m) => !m.startsWith('progress')).concat(messages.filter((m) => m.startsWith('progress')).length + ' progress') };
+} catch (e) { window.result = { error: e.message }; }
+out.textContent = JSON.stringify(window.result, null, 2);
+</script>
+</body>
+</html>

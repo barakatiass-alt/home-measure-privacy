@@ -736,7 +736,7 @@ export async function createRenderer({ gpuTiles = true } = {}) {
    * (step, loss, splat count). `shouldStop` ends early. Returns the trained splats.
    * Views hold a camera and an RGB Uint8 image (as decoded from the photos).
    */
-  async function trainScene(start, views, { steps = 3000, densifyEvery = 100, densifyFrom = 300, densifyUntil = 2000, onProgress, shouldStop, lr } = {}) {
+  async function trainScene(start, views, { steps = 3000, densifyEvery = 100, densifyFrom = 300, densifyUntil = 2000, maxSplats = 400000, onProgress, shouldStop, lr } = {}) {
     lr = { color: 0.025, opacity: 0.05, mean: 0.002, scale: 0.005, rotation: 0.001, ...lr };
     let gaussians = start;
     let n = gaussians.length;
@@ -779,11 +779,12 @@ export async function createRenderer({ gpuTiles = true } = {}) {
       if (t >= densifyFrom && t <= densifyUntil && t % densifyEvery === 0) {
         // 3DGS sets its threshold (0.0002) on gradients in NDC units; ours are per pixel.
         const gradThreshold = 2e-4 / (0.5 * views[0].cam.width);
-        gaussians = densify(unpackGaussians(await read(gBuf, n * 64)), await read(statsBuf, n * 8), { gradThreshold });
+        gaussians = densify(unpackGaussians(await read(gBuf, n * 64)), await read(statsBuf, n * 8), { gradThreshold, maxCount: maxSplats });
         upload();
       }
       if (t % 50 === 0) {
-        onProgress?.({ step: t, loss: lossCount ? lossSum / lossCount : NaN, count: n });
+        // Awaited, so the caller can pause training (the phone does when it gets hot).
+        await onProgress?.({ step: t, loss: lossCount ? lossSum / lossCount : NaN, count: n });
         lossSum = 0;
         lossCount = 0;
         await new Promise((r) => setTimeout(r)); // let the page redraw
