@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Store Screenshots</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'">
+<style>
+  :root { --ink:#11262A; --muted:#5B6B6E; --accent:#0A766F; --card:#fff; --bg:#F4F7F6; --line:rgba(17,38,42,.12); }
+  @media (prefers-color-scheme: dark) { :root { --ink:#E7EFEE; --muted:#9DB0AE; --card:#16262A; --bg:#0D1A1D; --line:rgba(255,255,255,.14); } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 24px; text-align: center; cursor: pointer; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  select, button, input { font: inherit; }
+  select, input { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  button { border: 0; border-radius: 999px; padding: 10px 18px; font-weight: 600; background: var(--accent); color: #fff; cursor: pointer; min-height: 42px; }
+  .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+  .shot { display: flex; flex-direction: column; gap: 6px; }
+  .shot canvas { width: 100%; border-radius: 10px; border: 1px solid var(--line); }
+  .shot input { width: 100%; }
+</style>
+</head>
+<body>
+<main>
+  <h1>App Store screenshots</h1>
+  <p class="sub">Drop raw iPhone screenshots. Each gets a caption and a background at 1290 × 2796 (6.9 inch, what App Store Connect asks for). Nothing is uploaded.</p>
+  <div class="card">
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose screenshots">Drop screenshots here, or tap to choose<input type="file" id="file" accept="image/*" multiple hidden></div>
+    <div class="row" style="margin-top:12px">
+      <label>Captions <select id="lang"><option value="en">English</option><option value="he">עברית</option></select></label>
+      <button id="save">Download all</button>
+    </div>
+  </div>
+  <div class="shots" id="shots"></div>
+</main>
+<script>
+const W = 1290, H = 2796;
+// Default captions in screenshot order (Welcome, scan, room result, report, share, 3D).
+const CAPTIONS = {
+  en: ['Measure a whole home with your iPhone', 'Walk through it once. LiDAR does the rest', 'Every room measured and named', 'A professional report with an architectural plan', 'Share the PDF, the plan or a 3D tour', 'Walk through it in 3D'],
+  he: ['מודדים בית שלם עם האייפון', 'עוברים בבית פעם אחת, ה־LiDAR עושה את השאר', 'כל חדר נמדד ומקבל שם', 'דוח מקצועי עם תוכנית אדריכלית', 'משתפים PDF, תוכנית או סיור תלת־ממד', 'מסתובבים בבית בתלת־ממד'],
+};
+const shots = [];
+const $ = (id) => document.getElementById(id);
+
+function wrap(ctx, text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  for (const w of words) {
+    const next = line ? line + ' ' + w : w;
+    if (ctx.measureText(next).width > maxWidth && line) { lines.push(line); line = w; } else line = next;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function draw(shot) {
+  const c = shot.canvas;
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#0A766F');
+  g.addColorStop(1, '#064C47');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  const rtl = $('lang').value === 'he';
+  ctx.direction = rtl ? 'rtl' : 'ltr';
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textAlign = 'center';
+  ctx.font = '700 92px -apple-system, "Segoe UI", Arial, sans-serif';
+  const lines = wrap(ctx, shot.caption, W - 180);
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, 230 + i * 112));
+  // The phone screen: the screenshot scaled into a rounded frame below the caption.
+  const top = 230 + lines.length * 112 + 40;
+  const maxH = H - top - 80;
+  const scale = Math.min((W - 220) / shot.img.width, maxH / shot.img.height);
+  const w = shot.img.width * scale, h = shot.img.height * scale;
+  const x = (W - w) / 2, y = top;
+  const r = 70;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 60; ctx.shadowOffsetY = 20;
+  ctx.fillStyle = '#0B1416';
+  ctx.beginPath(); ctx.roundRect(x - 18, y - 18, w + 36, h + 36, r + 18); ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.clip();
+  ctx.drawImage(shot.img, x, y, w, h);
+  ctx.restore();
+}
+
+function add(file) {
+  const img = new Image();
+  img.onload = () => {
+    const i = shots.length;
+    const box = document.createElement('div');
+    box.className = 'shot';
+    const canvas = document.createElement('canvas');
+    const input = document.createElement('input');
+    input.setAttribute('aria-label', 'Caption');
+    input.dir = 'auto';
+    const shot = { img, canvas, input, caption: CAPTIONS[$('lang').value][i] ?? '' };
+    input.value = shot.caption;
+    input.oninput = () => { shot.caption = input.value; draw(shot); };
+    box.append(canvas, input);
+    $('shots').append(box);
+    shots.push(shot);
+    draw(shot);
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+$('drop').onclick = () => $('file').click();
+$('drop').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') $('file').click(); };
+$('file').onchange = (e) => [...e.target.files].forEach(add);
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', (e) => { e.preventDefault(); [...e.dataTransfer.files].filter((f) => f.type.startsWith('image/')).forEach(add); });
+$('lang').onchange = () => shots.forEach((s, i) => { s.caption = CAPTIONS[$('lang').value][i] ?? s.caption; s.input.value = s.caption; draw(s); });
+$('save').onclick = () => shots.forEach((s, i) => s.canvas.toBlob((b) => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(b);
+  a.download = `home-measure-${$('lang').value}-${i + 1}.png`;
+  a.click();
+}, 'image/png'));
+</script>
+</body>
+</html>
