@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Home Tour</title>
 <meta name="description" content="3D tour of a home measured with Home Measure.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob: data: https://cdn.jsdelivr.net https://*.supabase.co; worker-src 'self' blob:; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
 <style>
   :root { --ink:#11262A; --muted:#5B6B6E; --accent:#0A766F; --card:#ffffff; --bg:#F4F7F6; --line:rgba(17,38,42,.12); }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ink:#E7EFEE; --muted:#9DB0AE; --card:#16262A; --bg:#0D1A1D; --line:rgba(255,255,255,.14); } }
@@ -58,10 +60,23 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const params = new URLSearchParams(location.search);
-const src = params.get('model') || 'sample.glb';
+/**
+ * Models and splats load only from this site or a Home Measure storage bucket, so a
+ * crafted link cannot show someone else's content under this page's name.
+ */
+function allowed(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url, location.href);
+    if (u.origin === location.origin) return u.href;
+    if (u.protocol === 'https:' && u.hostname.endsWith('.supabase.co') && u.pathname.startsWith('/storage/v1/object/public/')) return u.href;
+  } catch {}
+  return null;
+}
+const src = allowed(params.get('model')) || 'sample.glb';
 // Optional photoreal splat (.ply/.splat/.ksplat), trained from the same scan, so it
 // shares the model's coordinates.
-const splatSrc = params.get('splat');
+const splatSrc = allowed(params.get('splat'));
 const homeName = params.get('name');
 if (homeName) { document.getElementById('name').textContent = homeName; document.title = homeName + ' · Home Tour'; }
 
