@@ -43,21 +43,21 @@
 </head>
 <body>
 <canvas id="view"></canvas>
-<canvas id="map" aria-label="Map of the home; tap to walk there"></canvas>
-<div id="status">Loading the 3D home…</div>
+<canvas id="map" data-t-label="map" aria-label="Map of the home; tap to walk there"></canvas>
+<div id="status" data-t="loading">Loading the 3D home…</div>
 <header>
   <div class="mark">HM</div>
-  <div class="title"><b id="name">Home tour</b><span>Measured with <a href="../" target="_blank" rel="noopener">Home Measure</a></span></div>
+  <div class="title"><b id="name" data-t="homeTour">Home tour</b><span><span data-t="measuredWith">Measured with</span> <a href="../" target="_blank" rel="noopener">Home Measure</a></span></div>
 </header>
 <div class="bar">
-  <div class="hint" id="hint">Drag to turn the model. Pinch or scroll to zoom.</div>
+  <div class="hint" id="hint" data-t="hintModel">Drag to turn the model. Pinch or scroll to zoom.</div>
   <div class="row" id="rooms"></div>
   <div class="row">
-    <button id="dollhouse" aria-pressed="true">Dollhouse</button>
-    <button id="walk" aria-pressed="false">Walk through</button>
-    <button id="photo" aria-pressed="false" hidden>Photoreal</button>
-    <a id="report" class="btn" target="_blank" rel="noopener" hidden>Report (PDF)</a>
-    <a id="ar" class="btn" rel="ar" hidden><img alt="" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">View in AR</a>
+    <button id="dollhouse" aria-pressed="true" data-t="dollhouse">Dollhouse</button>
+    <button id="walk" aria-pressed="false" data-t="walk">Walk through</button>
+    <button id="photo" aria-pressed="false" hidden data-t="photoreal">Photoreal</button>
+    <a id="report" class="btn" target="_blank" rel="noopener" hidden data-t="report">Report (PDF)</a>
+    <a id="ar" class="btn" rel="ar" hidden><img alt="" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><span data-t="ar">View in AR</span></a>
   </div>
 </div>
 <script type="module">
@@ -66,6 +66,40 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const params = new URLSearchParams(location.search);
+
+// The tour speaks the viewer's language (English, Hebrew right to left, or Thai).
+const WORDS = {
+  en: {
+    homeTour: 'Home tour', measuredWith: 'Measured with', loading: 'Loading the 3D home…', failed: 'This tour could not be loaded. Ask for a new link.',
+    hintModel: 'Drag to turn the model. Pinch or scroll to zoom.', hintWalk: 'Drag to look around. Tap the floor to walk there.',
+    dollhouse: 'Dollhouse', walk: 'Walk through', photoreal: 'Photoreal', report: 'Report (PDF)', ar: 'View in AR', map: 'Map of the home; tap to walk there', tourTitle: 'Home Tour',
+    rooms: { livingRoom: 'Living room', bedroom: 'Bedroom', bathroom: 'Bathroom', kitchen: 'Kitchen', diningRoom: 'Dining' },
+  },
+  he: {
+    homeTour: 'סיור בבית', measuredWith: 'נמדד עם', loading: 'טוען את הבית בתלת־ממד…', failed: 'לא הצלחנו לטעון את הסיור. בקשו קישור חדש.',
+    hintModel: 'גררו כדי לסובב את המודל. צבטו או גללו כדי להתקרב.', hintWalk: 'גררו כדי להסתכל מסביב. הקישו על הרצפה כדי ללכת לשם.',
+    dollhouse: 'בית בובות', walk: 'הליכה בבית', photoreal: 'מציאותי', report: 'דוח (PDF)', ar: 'צפייה ב־AR', map: 'מפת הבית; הקישו כדי ללכת לשם', tourTitle: 'סיור בבית',
+    rooms: { livingRoom: 'סלון', bedroom: 'חדר שינה', bathroom: 'חדר רחצה', kitchen: 'מטבח', diningRoom: 'פינת אוכל' },
+  },
+  th: {
+    homeTour: 'ทัวร์บ้าน', measuredWith: 'วัดด้วย', loading: 'กำลังโหลดบ้าน 3 มิติ…', failed: 'โหลดทัวร์นี้ไม่ได้ ขอลิงก์ใหม่',
+    hintModel: 'ลากเพื่อหมุนโมเดล บีบหรือเลื่อนเพื่อซูม', hintWalk: 'ลากเพื่อมองรอบๆ แตะพื้นเพื่อเดินไปที่นั่น',
+    dollhouse: 'มุมมองบ้าน', walk: 'เดินชม', photoreal: 'สมจริง', report: 'รายงาน (PDF)', ar: 'ดูแบบ AR', map: 'แผนที่บ้าน แตะเพื่อเดินไปที่นั่น', tourTitle: 'ทัวร์บ้าน',
+    rooms: { livingRoom: 'ห้องนั่งเล่น', bedroom: 'ห้องนอน', bathroom: 'ห้องน้ำ', kitchen: 'ห้องครัว', diningRoom: 'ห้องทานอาหาร' },
+  },
+};
+function pickLang() {
+  const asked = params.get('lang') || (navigator.languages && navigator.languages[0]) || navigator.language || 'en';
+  const code = asked.slice(0, 2).toLowerCase();
+  return code === 'he' || code === 'iw' ? 'he' : code === 'th' ? 'th' : 'en';
+}
+const LANG = pickLang();
+const T = WORDS[LANG];
+document.documentElement.lang = LANG;
+if (LANG === 'he') document.documentElement.dir = 'rtl';
+for (const el of document.querySelectorAll('[data-t]')) el.textContent = T[el.dataset.t];
+for (const el of document.querySelectorAll('[data-t-label]')) el.setAttribute('aria-label', T[el.dataset.tLabel]);
+document.title = T.tourTitle;
 /**
  * Models and splats load only from this site or a Home Measure storage bucket, so a
  * crafted link cannot show someone else's content under this page's name.
@@ -85,7 +119,7 @@ const src = allowed(params.get('model')) || 'sample.glb';
 // shares the model's coordinates.
 const splatSrc = allowed(params.get('splat'));
 const homeName = params.get('name');
-if (homeName) { document.getElementById('name').textContent = homeName; document.title = homeName + ' · Home Tour'; }
+if (homeName) { document.getElementById('name').textContent = homeName; document.title = homeName + ' · ' + T.tourTitle; }
 
 // "View in AR": the home's USDZ in iPhone Quick Look, where the browser supports it.
 const usdz = allowed(params.get('usdz'));
@@ -222,7 +256,7 @@ function loadModel(modelUrl, splat) {
     const m = /^(livingRoom|bedroom|bathroom|kitchen|diningRoom)/.exec(o.name || '');
     if (m && !o.isMesh && !o.name.includes('_')) rooms.push({ kind: m[1], pos: o.getWorldPosition(new THREE.Vector3()) });
   });
-  const labels = { livingRoom: 'Living room', bedroom: 'Bedroom', bathroom: 'Bathroom', kitchen: 'Kitchen', diningRoom: 'Dining' };
+  const labels = T.rooms;
   const seen = {};
   const roomsRow = document.getElementById('rooms');
   for (const room of rooms) {
@@ -241,8 +275,8 @@ function loadModel(modelUrl, splat) {
   status.hidden = true;
   }, (e) => {
     // On a slow connection show how far the download is.
-    if (e.total) status.textContent = `Loading the 3D home… ${Math.round((e.loaded / e.total) * 100)}%`;
-  }, () => { status.hidden = false; status.textContent = 'This tour could not be loaded. Ask for a new link.'; });
+    if (e.total) status.textContent = `${T.loading} ${Math.round((e.loaded / e.total) * 100)}%`;
+  }, () => { status.hidden = false; status.textContent = T.failed; });
 }
 // In the app (?app=1) the page waits for the home's own files instead of the sample.
 if (params.get('app') !== '1') loadModel(src, splatSrc ? { url: splatSrc, name: splatSrc } : null);
@@ -317,7 +351,7 @@ function setMode(next) {
   document.getElementById('walk').setAttribute('aria-pressed', String(mode === 'walk'));
   controls.enabled = mode === 'dollhouse';
   mapCanvas.style.display = mode === 'walk' ? 'block' : 'none';
-  hint.textContent = mode === 'walk' ? 'Drag to look around. Tap the floor to walk there.' : 'Drag to turn the model. Pinch or scroll to zoom.';
+  hint.textContent = mode === 'walk' ? T.hintWalk : T.hintModel;
 }
 document.getElementById('dollhouse').onclick = () => setMode('dollhouse');
 document.getElementById('walk').onclick = () => setMode('walk');
