@@ -76,7 +76,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const params = new URLSearchParams(location.search);
 
-// The tour speaks the viewer's language (English, Hebrew right to left, or Thai).
+// The tour speaks the viewer's language: English, Hebrew, French, Spanish, Arabic, Italian
+// or Thai (Hebrew and Arabic right to left).
 const WORDS = {
   en: {
     homeTour: 'Home tour', measuredWith: 'Measured with', loading: 'Loading the 3D home…', failed: 'This tour could not be loaded. Ask for a new link.',
@@ -99,16 +100,45 @@ const WORDS = {
     dollhouse: 'มุมมองบ้าน', walk: 'เดินชม', photoreal: 'สมจริง', report: 'รายงาน (PDF)', ar: 'ดูแบบ AR', map: 'แผนที่บ้าน แตะเพื่อเดินไปที่นั่น', tourTitle: 'ทัวร์บ้าน',
     rooms: { livingRoom: 'ห้องนั่งเล่น', bedroom: 'ห้องนอน', bathroom: 'ห้องน้ำ', kitchen: 'ห้องครัว', diningRoom: 'ห้องทานอาหาร' },
   },
+  fr: {
+    homeTour: 'Visite du logement', measuredWith: 'Mesuré avec', loading: 'Chargement du logement en 3D…', failed: 'Impossible de charger cette visite. Demandez un nouveau lien.',
+    hintModel: 'Faites glisser pour tourner le modèle. Pincez ou défilez pour zoomer.', hintWalk: 'Faites glisser pour regarder autour. Touchez le sol pour vous y rendre.',
+    share: 'Partager', copied: 'Lien copié', measure: 'Mesurer', hintMeasure: 'Touchez deux points du modèle pour mesurer entre eux.',
+    dollhouse: 'Maquette', walk: 'Visite', photoreal: 'Photoréaliste', report: 'Rapport (PDF)', ar: 'Voir en RA', map: 'Plan du logement ; touchez pour vous y rendre', tourTitle: 'Visite du logement',
+    rooms: { livingRoom: 'Salon', bedroom: 'Chambre', bathroom: 'Salle de bain', kitchen: 'Cuisine', diningRoom: 'Coin repas' },
+  },
+  es: {
+    homeTour: 'Recorrido por la vivienda', measuredWith: 'Medido con', loading: 'Cargando la vivienda en 3D…', failed: 'No se pudo cargar este recorrido. Pide un enlace nuevo.',
+    hintModel: 'Arrastra para girar el modelo. Pellizca o desplaza para hacer zoom.', hintWalk: 'Arrastra para mirar alrededor. Toca el suelo para ir allí.',
+    share: 'Compartir', copied: 'Enlace copiado', measure: 'Medir', hintMeasure: 'Toca dos puntos del modelo para medir entre ellos.',
+    dollhouse: 'Maqueta', walk: 'Recorrido', photoreal: 'Fotorrealista', report: 'Informe (PDF)', ar: 'Ver en RA', map: 'Plano de la vivienda; toca para ir allí', tourTitle: 'Recorrido por la vivienda',
+    rooms: { livingRoom: 'Salón', bedroom: 'Dormitorio', bathroom: 'Baño', kitchen: 'Cocina', diningRoom: 'Comedor' },
+  },
+  it: {
+    homeTour: 'Tour della casa', measuredWith: 'Misurato con', loading: 'Caricamento della casa in 3D…', failed: 'Impossibile caricare questo tour. Chiedi un nuovo link.',
+    hintModel: 'Trascina per ruotare il modello. Pizzica o scorri per lo zoom.', hintWalk: 'Trascina per guardarti intorno. Tocca il pavimento per andarci.',
+    share: 'Condividi', copied: 'Link copiato', measure: 'Misura', hintMeasure: 'Tocca due punti del modello per misurare tra loro.',
+    dollhouse: 'Plastico', walk: 'Percorso', photoreal: 'Fotorealistico', report: 'Report (PDF)', ar: 'Vedi in AR', map: 'Mappa della casa; tocca per andarci', tourTitle: 'Tour della casa',
+    rooms: { livingRoom: 'Soggiorno', bedroom: 'Camera da letto', bathroom: 'Bagno', kitchen: 'Cucina', diningRoom: 'Zona pranzo' },
+  },
+  ar: {
+    homeTour: 'جولة في المنزل', measuredWith: 'تم القياس باستخدام', loading: 'جارٍ تحميل المنزل ثلاثي الأبعاد…', failed: 'تعذّر تحميل هذه الجولة. اطلب رابطًا جديدًا.',
+    hintModel: 'اسحب لتدوير النموذج. اقرص أو مرّر للتكبير.', hintWalk: 'اسحب للنظر حولك. اضغط على الأرضية للانتقال إليها.',
+    share: 'مشاركة', copied: 'تم نسخ الرابط', measure: 'قياس', hintMeasure: 'اضغط على نقطتين في النموذج للقياس بينهما.',
+    dollhouse: 'مجسّم', walk: 'جولة', photoreal: 'واقعي', report: 'التقرير (PDF)', ar: 'عرض بالواقع المعزز', map: 'خريطة المنزل؛ اضغط للانتقال إليها', tourTitle: 'جولة في المنزل',
+    rooms: { livingRoom: 'غرفة المعيشة', bedroom: 'غرفة النوم', bathroom: 'الحمّام', kitchen: 'المطبخ', diningRoom: 'منطقة الطعام' },
+  },
 };
 function pickLang() {
   const asked = params.get('lang') || (navigator.languages && navigator.languages[0]) || navigator.language || 'en';
   const code = asked.slice(0, 2).toLowerCase();
-  return code === 'he' || code === 'iw' ? 'he' : code === 'th' ? 'th' : 'en';
+  if (code === 'iw') return 'he';
+  return code in WORDS ? code : 'en';
 }
 const LANG = pickLang();
 const T = WORDS[LANG];
 document.documentElement.lang = LANG;
-if (LANG === 'he') document.documentElement.dir = 'rtl';
+if (LANG === 'he' || LANG === 'ar') document.documentElement.dir = 'rtl';
 for (const el of document.querySelectorAll('[data-t]')) el.textContent = T[el.dataset.t];
 for (const el of document.querySelectorAll('[data-t-label]')) el.setAttribute('aria-label', T[el.dataset.tLabel]);
 document.title = T.tourTitle;
