@@ -31,6 +31,8 @@
   #status { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
   a.btn { font-weight: 600; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 8px 14px; min-height: 40px; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
   a.btn[hidden] { display: none; }
+  .rlabel { position: fixed; transform: translate(-50%, -50%); background: var(--card); color: var(--ink); border: 1px solid var(--line); font: 600 12px/1 -apple-system, "Segoe UI", Arial, sans-serif; padding: 5px 9px; border-radius: 999px; white-space: nowrap; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.12); min-height: 0; }
+  .rlabel[hidden] { display: none; }
   #mlabel { position: fixed; transform: translate(-50%, -130%); background: var(--accent); color: #fff; font-weight: 700; font-size: 15px; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
   #mlabel[hidden] { display: none; }
   .mark img { width: 30px; height: 30px; border-radius: 8px; object-fit: contain; background: #fff; }
@@ -48,6 +50,7 @@
 <canvas id="map" data-t-label="map" aria-label="Map of the home; tap to walk there"></canvas>
 <div id="status" data-t="loading">Loading the 3D home…</div>
 <div id="mlabel" hidden></div>
+<div id="labels"></div>
 <header>
   <div class="mark">HM</div>
   <div class="title"><b id="name" data-t="homeTour">Home tour</b><span><span data-t="measuredWith">Measured with</span> <a href="../" target="_blank" rel="noopener">Home Measure</a></span></div>
@@ -222,6 +225,16 @@ addEventListener('resize', resize);
 resize();
 
 let model = null;
+const roomLabels = [];
+function placeRoomLabels(show) {
+  for (const l of roomLabels) {
+    if (!show) { l.el.hidden = true; continue; }
+    const v = l.pos.clone().project(orbitCam);
+    l.el.hidden = v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1;
+    l.el.style.left = `${((v.x + 1) / 2) * innerWidth}px`;
+    l.el.style.top = `${((1 - v.y) / 2) * innerHeight}px`;
+  }
+}
 let splats = null;
 let photoreal = false;
 /** Loads the measured model (and optional splat), replacing whatever was shown. */
@@ -230,6 +243,8 @@ function loadModel(modelUrl, splat) {
   if (splats) { scene.remove(splats); splats.dispose?.(); splats = null; }
   floors.length = 0;
   document.getElementById('rooms').replaceChildren();
+  document.getElementById('labels').replaceChildren();
+  roomLabels.length = 0;
   document.getElementById('photo').hidden = true;
   photoreal = false;
   new GLTFLoader().load(modelUrl, (gltf) => {
@@ -273,6 +288,13 @@ function loadModel(modelUrl, splat) {
     b.textContent = labels[room.kind] + (total > 1 ? ' ' + seen[room.kind] : '');
     b.onclick = () => { setMode('walk'); walkTo(room.pos); };
     roomsRow.appendChild(b);
+    // The same room named on the model in the dollhouse view; tapping it walks in.
+    const tag = document.createElement('button');
+    tag.className = 'rlabel';
+    tag.textContent = b.textContent;
+    tag.onclick = b.onclick;
+    document.getElementById('labels').appendChild(tag);
+    roomLabels.push({ el: tag, pos: new THREE.Vector3(room.pos.x, floorY + 0.4, room.pos.z) });
   }
   const start = rooms.find((x) => x.kind === 'livingRoom') || rooms[0];
   walkCam.position.set(start ? start.pos.x : center.x, floorY + EYE, start ? start.pos.z : center.z);
@@ -460,6 +482,7 @@ renderer.setAnimationLoop(() => {
     controls.update();
     renderer.render(scene, orbitCam);
     placeMeasureLabel(orbitCam);
+    placeRoomLabels(!measuring);
     return;
   }
   walkCam.rotation.set(pitch, yaw, 0);
@@ -479,6 +502,7 @@ renderer.setAnimationLoop(() => {
   }
   renderer.render(scene, walkCam);
   placeMeasureLabel(walkCam);
+  placeRoomLabels(false);
   marker.visible = true;
   marker.position.set(walkCam.position.x, (box ? box.max.y : 3) + 1, walkCam.position.z);
   marker.rotation.y = yaw;
