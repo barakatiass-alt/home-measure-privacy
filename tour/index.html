@@ -31,6 +31,8 @@
   #status { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
   a.btn { font-weight: 600; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 8px 14px; min-height: 40px; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
   a.btn[hidden] { display: none; }
+  #mlabel { position: fixed; transform: translate(-50%, -130%); background: var(--accent); color: #fff; font-weight: 700; font-size: 15px; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+  #mlabel[hidden] { display: none; }
   .mark img { width: 30px; height: 30px; border-radius: 8px; object-fit: contain; background: #fff; }
 </style>
 <script type="importmap">
@@ -45,6 +47,7 @@
 <canvas id="view"></canvas>
 <canvas id="map" data-t-label="map" aria-label="Map of the home; tap to walk there"></canvas>
 <div id="status" data-t="loading">Loading the 3D home…</div>
+<div id="mlabel" hidden></div>
 <header>
   <div class="mark">HM</div>
   <div class="title"><b id="name" data-t="homeTour">Home tour</b><span><span data-t="measuredWith">Measured with</span> <a href="../" target="_blank" rel="noopener">Home Measure</a></span></div>
@@ -55,6 +58,7 @@
   <div class="row">
     <button id="dollhouse" aria-pressed="true" data-t="dollhouse">Dollhouse</button>
     <button id="walk" aria-pressed="false" data-t="walk">Walk through</button>
+    <button id="measure" aria-pressed="false" data-t="measure">Measure</button>
     <button id="photo" aria-pressed="false" hidden data-t="photoreal">Photoreal</button>
     <a id="report" class="btn" target="_blank" rel="noopener" hidden data-t="report">Report (PDF)</a>
     <a id="ar" class="btn" rel="ar" hidden><img alt="" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><span data-t="ar">View in AR</span></a>
@@ -72,18 +76,21 @@ const WORDS = {
   en: {
     homeTour: 'Home tour', measuredWith: 'Measured with', loading: 'Loading the 3D home…', failed: 'This tour could not be loaded. Ask for a new link.',
     hintModel: 'Drag to turn the model. Pinch or scroll to zoom.', hintWalk: 'Drag to look around. Tap the floor to walk there.',
+    measure: 'Measure', hintMeasure: 'Tap two points on the model to measure between them.',
     dollhouse: 'Dollhouse', walk: 'Walk through', photoreal: 'Photoreal', report: 'Report (PDF)', ar: 'View in AR', map: 'Map of the home; tap to walk there', tourTitle: 'Home Tour',
     rooms: { livingRoom: 'Living room', bedroom: 'Bedroom', bathroom: 'Bathroom', kitchen: 'Kitchen', diningRoom: 'Dining' },
   },
   he: {
     homeTour: 'סיור בבית', measuredWith: 'נמדד עם', loading: 'טוען את הבית בתלת־ממד…', failed: 'לא הצלחנו לטעון את הסיור. בקשו קישור חדש.',
     hintModel: 'גררו כדי לסובב את המודל. צבטו או גללו כדי להתקרב.', hintWalk: 'גררו כדי להסתכל מסביב. הקישו על הרצפה כדי ללכת לשם.',
+    measure: 'מדידה', hintMeasure: 'הקישו על שתי נקודות במודל כדי למדוד ביניהן.',
     dollhouse: 'בית בובות', walk: 'הליכה בבית', photoreal: 'מציאותי', report: 'דוח (PDF)', ar: 'צפייה ב־AR', map: 'מפת הבית; הקישו כדי ללכת לשם', tourTitle: 'סיור בבית',
     rooms: { livingRoom: 'סלון', bedroom: 'חדר שינה', bathroom: 'חדר רחצה', kitchen: 'מטבח', diningRoom: 'פינת אוכל' },
   },
   th: {
     homeTour: 'ทัวร์บ้าน', measuredWith: 'วัดด้วย', loading: 'กำลังโหลดบ้าน 3 มิติ…', failed: 'โหลดทัวร์นี้ไม่ได้ ขอลิงก์ใหม่',
     hintModel: 'ลากเพื่อหมุนโมเดล บีบหรือเลื่อนเพื่อซูม', hintWalk: 'ลากเพื่อมองรอบๆ แตะพื้นเพื่อเดินไปที่นั่น',
+    measure: 'วัด', hintMeasure: 'แตะสองจุดบนโมเดลเพื่อวัดระยะ',
     dollhouse: 'มุมมองบ้าน', walk: 'เดินชม', photoreal: 'สมจริง', report: 'รายงาน (PDF)', ar: 'ดูแบบ AR', map: 'แผนที่บ้าน แตะเพื่อเดินไปที่นั่น', tourTitle: 'ทัวร์บ้าน',
     rooms: { livingRoom: 'ห้องนั่งเล่น', bedroom: 'ห้องนอน', bathroom: 'ห้องน้ำ', kitchen: 'ห้องครัว', diningRoom: 'ห้องทานอาหาร' },
   },
@@ -351,15 +358,69 @@ function setMode(next) {
   document.getElementById('walk').setAttribute('aria-pressed', String(mode === 'walk'));
   controls.enabled = mode === 'dollhouse';
   mapCanvas.style.display = mode === 'walk' ? 'block' : 'none';
-  hint.textContent = mode === 'walk' ? T.hintWalk : T.hintModel;
+  hint.textContent = measuring ? T.hintMeasure : mode === 'walk' ? T.hintWalk : T.hintModel;
 }
 document.getElementById('dollhouse').onclick = () => setMode('dollhouse');
 document.getElementById('walk').onclick = () => setMode('walk');
 
 function walkTo(p) { target = new THREE.Vector3(p.x, floorY + EYE, p.z); }
 
-// Walking: drag to look around, tap (without dragging) to walk to the tapped floor point.
 const ray = new THREE.Raycaster();
+
+// Measuring: tap two points on the measured model (also under the photoreal layer);
+// a line joins them and the distance shows in metres. A third tap starts again.
+let measuring = false;
+const measured = [];
+const measureGroup = new THREE.Group();
+measureGroup.renderOrder = 20;
+scene.add(measureGroup);
+const mlabel = document.getElementById('mlabel');
+const dotMat = new THREE.MeshBasicMaterial({ color: 0x0A766F, depthTest: false });
+const lineMat = new THREE.LineBasicMaterial({ color: 0x0A766F, depthTest: false });
+function clearMeasure() {
+  measured.length = 0;
+  measureGroup.clear();
+  mlabel.hidden = true;
+}
+function addMeasurePoint(point) {
+  if (measured.length === 2) clearMeasure();
+  measured.push(point.clone());
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 12), dotMat);
+  dot.position.copy(point);
+  dot.renderOrder = 20;
+  measureGroup.add(dot);
+  if (measured.length === 2) {
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(measured), lineMat);
+    line.renderOrder = 20;
+    measureGroup.add(line);
+    mlabel.textContent = `${measured[0].distanceTo(measured[1]).toFixed(2)} m`;
+    mlabel.hidden = false;
+  }
+}
+function placeMeasureLabel(cam) {
+  if (measured.length !== 2) return;
+  const mid = measured[0].clone().add(measured[1]).multiplyScalar(0.5).project(cam);
+  mlabel.hidden = mid.z > 1;
+  mlabel.style.left = `${((mid.x + 1) / 2) * innerWidth}px`;
+  mlabel.style.top = `${((1 - mid.y) / 2) * innerHeight}px`;
+}
+document.getElementById('measure').onclick = () => {
+  measuring = !measuring;
+  document.getElementById('measure').setAttribute('aria-pressed', String(measuring));
+  if (!measuring) clearMeasure();
+  hint.textContent = measuring ? T.hintMeasure : mode === 'walk' ? T.hintWalk : T.hintModel;
+};
+let tap = null;
+canvas.addEventListener('pointerdown', (e) => { tap = { x: e.clientX, y: e.clientY }; });
+canvas.addEventListener('pointerup', (e) => {
+  if (!measuring || !tap || !model || Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 6) return;
+  const cam = mode === 'walk' ? walkCam : orbitCam;
+  ray.setFromCamera(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), cam);
+  const hit = ray.intersectObject(model, true).find((h) => h.object.isMesh);
+  if (hit) addMeasurePoint(hit.point);
+});
+
+// Walking: drag to look around, tap (without dragging) to walk to the tapped floor point.
 let drag = null;
 canvas.addEventListener('pointerdown', (e) => { if (mode === 'walk') drag = { x: e.clientX, y: e.clientY, moved: 0 }; });
 addEventListener('pointermove', (e) => {
@@ -377,7 +438,7 @@ function floorHit(p, cam) {
   return ray.intersectObjects(floors.length ? floors : scene.children, true)[0];
 }
 addEventListener('pointerup', (e) => {
-  if (drag && drag.moved < 6) {
+  if (drag && drag.moved < 6 && !measuring) {
     const hit = floorHit(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), walkCam);
     if (hit) walkTo(hit.point);
   }
@@ -398,6 +459,7 @@ renderer.setAnimationLoop(() => {
   if (mode !== 'walk') {
     controls.update();
     renderer.render(scene, orbitCam);
+    placeMeasureLabel(orbitCam);
     return;
   }
   walkCam.rotation.set(pitch, yaw, 0);
@@ -416,6 +478,7 @@ renderer.setAnimationLoop(() => {
     else walkCam.position.addScaledVector(d, Math.min(1, dt * 4));
   }
   renderer.render(scene, walkCam);
+  placeMeasureLabel(walkCam);
   marker.visible = true;
   marker.position.set(walkCam.position.x, (box ? box.max.y : 3) + 1, walkCam.position.z);
   marker.rotation.y = yaw;
