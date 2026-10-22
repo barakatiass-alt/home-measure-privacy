@@ -62,6 +62,7 @@
     <button id="dollhouse" aria-pressed="true" data-t="dollhouse">Dollhouse</button>
     <button id="walk" aria-pressed="false" data-t="walk">Walk through</button>
     <button id="measure" aria-pressed="false" data-t="measure">Measure</button>
+    <button id="share" data-t="share">Share</button>
     <button id="photo" aria-pressed="false" hidden data-t="photoreal">Photoreal</button>
     <a id="report" class="btn" target="_blank" rel="noopener" hidden data-t="report">Report (PDF)</a>
     <a id="ar" class="btn" rel="ar" hidden><img alt="" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><span data-t="ar">View in AR</span></a>
@@ -79,21 +80,21 @@ const WORDS = {
   en: {
     homeTour: 'Home tour', measuredWith: 'Measured with', loading: 'Loading the 3D home…', failed: 'This tour could not be loaded. Ask for a new link.',
     hintModel: 'Drag to turn the model. Pinch or scroll to zoom.', hintWalk: 'Drag to look around. Tap the floor to walk there.',
-    measure: 'Measure', hintMeasure: 'Tap two points on the model to measure between them.',
+    share: 'Share', copied: 'Link copied', measure: 'Measure', hintMeasure: 'Tap two points on the model to measure between them.',
     dollhouse: 'Dollhouse', walk: 'Walk through', photoreal: 'Photoreal', report: 'Report (PDF)', ar: 'View in AR', map: 'Map of the home; tap to walk there', tourTitle: 'Home Tour',
     rooms: { livingRoom: 'Living room', bedroom: 'Bedroom', bathroom: 'Bathroom', kitchen: 'Kitchen', diningRoom: 'Dining' },
   },
   he: {
     homeTour: 'סיור בבית', measuredWith: 'נמדד עם', loading: 'טוען את הבית בתלת־ממד…', failed: 'לא הצלחנו לטעון את הסיור. בקשו קישור חדש.',
     hintModel: 'גררו כדי לסובב את המודל. צבטו או גללו כדי להתקרב.', hintWalk: 'גררו כדי להסתכל מסביב. הקישו על הרצפה כדי ללכת לשם.',
-    measure: 'מדידה', hintMeasure: 'הקישו על שתי נקודות במודל כדי למדוד ביניהן.',
+    share: 'שיתוף', copied: 'הקישור הועתק', measure: 'מדידה', hintMeasure: 'הקישו על שתי נקודות במודל כדי למדוד ביניהן.',
     dollhouse: 'בית בובות', walk: 'הליכה בבית', photoreal: 'מציאותי', report: 'דוח (PDF)', ar: 'צפייה ב־AR', map: 'מפת הבית; הקישו כדי ללכת לשם', tourTitle: 'סיור בבית',
     rooms: { livingRoom: 'סלון', bedroom: 'חדר שינה', bathroom: 'חדר רחצה', kitchen: 'מטבח', diningRoom: 'פינת אוכל' },
   },
   th: {
     homeTour: 'ทัวร์บ้าน', measuredWith: 'วัดด้วย', loading: 'กำลังโหลดบ้าน 3 มิติ…', failed: 'โหลดทัวร์นี้ไม่ได้ ขอลิงก์ใหม่',
     hintModel: 'ลากเพื่อหมุนโมเดล บีบหรือเลื่อนเพื่อซูม', hintWalk: 'ลากเพื่อมองรอบๆ แตะพื้นเพื่อเดินไปที่นั่น',
-    measure: 'วัด', hintMeasure: 'แตะสองจุดบนโมเดลเพื่อวัดระยะ',
+    share: 'แชร์', copied: 'คัดลอกลิงก์แล้ว', measure: 'วัด', hintMeasure: 'แตะสองจุดบนโมเดลเพื่อวัดระยะ',
     dollhouse: 'มุมมองบ้าน', walk: 'เดินชม', photoreal: 'สมจริง', report: 'รายงาน (PDF)', ar: 'ดูแบบ AR', map: 'แผนที่บ้าน แตะเพื่อเดินไปที่นั่น', tourTitle: 'ทัวร์บ้าน',
     rooms: { livingRoom: 'ห้องนั่งเล่น', bedroom: 'ห้องนอน', bathroom: 'ห้องน้ำ', kitchen: 'ห้องครัว', diningRoom: 'ห้องทานอาหาร' },
   },
@@ -130,6 +131,23 @@ const src = allowed(params.get('model')) || 'sample.glb';
 const splatSrc = allowed(params.get('splat'));
 const homeName = params.get('name');
 if (homeName) { document.getElementById('name').textContent = homeName; document.title = homeName + ' · ' + T.tourTitle; }
+
+// Share: a tour from the tour service is shared as its link page (it shows a preview
+// picture in chats); otherwise this page. Phones get the share sheet, others a copy.
+document.getElementById('share').onclick = async () => {
+  const model = params.get('model') || '';
+  const link = /^https:\/\/[^/]+\.workers\.dev\/t\/[a-z0-9]+\/home\.glb$/.test(model) ? model.replace(/home\.glb$/, '') : location.href;
+  const title = document.title;
+  try {
+    if (navigator.share) return await navigator.share({ title, url: link });
+    await navigator.clipboard.writeText(link);
+    const b = document.getElementById('share');
+    b.textContent = T.copied;
+    setTimeout(() => (b.textContent = T.share), 2000);
+  } catch {
+    // Cancelled by the user, or no clipboard: nothing to do.
+  }
+};
 
 // "View in AR": the home's USDZ in iPhone Quick Look, where the browser supports it.
 const usdz = allowed(params.get('usdz'));
