@@ -33,7 +33,7 @@
 <body>
 <main>
   <h1>Home Measure</h1>
-  <p class="muted">Measure a whole home with your iPhone: floor plans, a 3D model you can walk through, and a PDF report. Last updated 21 October 2026.</p>
+  <p class="muted">Measure a whole home with your iPhone: floor plans, a 3D model you can walk through, and a PDF report. Last updated 24 October 2026.</p>
   <nav aria-label="On this page"><a href="#plans">Plans</a><a href="#privacy">Privacy</a><a href="#support">Support</a><a href="#contact">Contact</a></nav>
 
   <section class="card" id="plans" aria-labelledby="plans-h">
@@ -70,15 +70,24 @@
     <h3>When you share</h3>
     <ul>
       <li>A report, floor plan, 3D file or listing text leaves your iPhone only when you share it yourself through the iOS share sheet, to the app or person you choose.</li>
-      <li><strong>Tour links.</strong> If you create a 3D tour link, the app asks first, then uploads the home's 3D model (also as a file for "View in AR" on iPhones, with a picture of it for link previews, and the PDF report with its listing text; with photo textures of the walls and floors when realistic 3D is on, and the photoreal model when you trained one) to our tour service, which stores it with Cloudflare. Anyone with the link can view the tour. On Pro, your brand name, contact line and logo go with the tour when you set them in Settings. The link uses a random 20-character address that cannot be guessed. Tours and their files are deleted after 12 months.</li>
+      <li><strong>Tour links.</strong> If you create a 3D tour link, the app asks first, then uploads the home's 3D model (also as a file for "View in AR" on iPhones, with a picture of it for link previews, and the PDF report with its listing text; with photo textures of the walls and floors when realistic 3D is on, and the photoreal model when you trained one) to our tour service, which stores it with Cloudflare. Anyone with the link can view the tour. On Pro, your brand name, contact line and logo go with the tour when you set them in Settings. The link uses a random 20-character address that cannot be guessed, and tour pages ask search engines not to list them. Tours and their files are deleted after 12 months.</li>
       <li>To check your plan, the app sends the tour service the App Store transaction ID of your purchase and a random id for the home. The service asks Apple whether the purchase is valid and keeps a count of the homes shared each month, deleted after 40 days. If you use a single export, it keeps a note that that purchase was used. None of this includes your name, Apple ID or payment details.</li>
+      <li><strong>Send scan data</strong> (Settings) makes one file with all your homes (names, addresses, sizes) and their raw scans, without photos, for checking a problem or moving to a new iPhone. The app warns you first, and you choose where it goes.</li>
+    </ul>
+
+    <h3>Services we use</h3>
+    <ul>
+      <li><strong>Cloudflare</strong> runs the tour service and stores tour links. Like any web server, it sees the IP address of the app and of people who open a tour; we do not keep logs of them.</li>
+      <li><strong>GitHub Pages</strong> hosts this site, the tour viewer and the trainer page.</li>
+      <li><strong>Expo</strong> delivers app updates: at launch the app asks whether a newer version of its code exists, sending the app version and a random install id. No homes or personal details are sent.</li>
+      <li><strong>Apple</strong> handles purchases and checks them for the tour service.</li>
     </ul>
 
     <h3>Purchases</h3>
     <p>Payments are handled by Apple. We never see your payment details or your Apple ID.</p>
 
     <h3>Deleting your data</h3>
-    <p>Delete a room or home inside the app, or delete the app to remove everything it stored on your iPhone. Tour links expire after 12 months. To remove one sooner, open the home, Share, Delete tour link; deleting the home deletes its tour too. For a link made by an older version, contact us with the link.</p>
+    <p>Delete a room or home inside the app, or delete the app to remove everything it stored on your iPhone. Tour links expire after 12 months. To remove one sooner, open the home, Share, Delete tour link; deleting the home deletes its tour too (if the iPhone is offline, the app finishes the delete the next time it opens). For a link made by an older version, contact us with the link.</p>
   </section>
 
   <section class="card" id="support" aria-labelledby="support-h">
