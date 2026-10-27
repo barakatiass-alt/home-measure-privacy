@@ -10,6 +10,8 @@
 //   0-2 colour, 3 opacityLogit, 4-8 screen (u, v, a, b, c), 9-15 unused here
 // Shape gradients per Gaussian (10 floats): mean (3), logScale (3), rotation (4)
 
+import { neighbourSizes, shuffled } from './neighbours.js';
+
 const COMMON = /* wgsl */ `
 struct Camera { view: array<vec4f, 3>, intr: vec4f, size: vec2f, count: u32, pixels: u32 };
 
@@ -498,15 +500,18 @@ const SH0 = 0.28209479177387814;
 const logit = (p) => Math.log(p / (1 - p));
 
 /**
- * Starting splats from the scan's points (COLMAP points3D): one per point, small,
- * mostly transparent, in the point's colour. Training grows and refines them.
+ * Starting splats from the scan's points (COLMAP points3D): one per point, mostly
+ * transparent, in the point's colour, as large as the gap to its neighbours (or `size`
+ * for all). Training grows and refines them.
  */
-export function initFromPoints({ xyz, rgb, count }, size = 0.06) {
+export function initFromPoints({ xyz, rgb, count }, size) {
+  const sizes = size ? new Float32Array(count).fill(size) : neighbourSizes(xyz, count);
   const out = [];
   for (let i = 0; i < count; i++) {
+    const s = Math.log(sizes[i]);
     out.push({
       mean: [xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]],
-      logScale: [Math.log(size), Math.log(size), Math.log(size)],
+      logScale: [s, s, s],
       rotation: [1, 0, 0, 0],
       opacityLogit: logit(0.1),
       color: [rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]],
@@ -904,9 +909,13 @@ export async function createRenderer({ gpuTiles = true } = {}) {
     upload();
     const stepBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     let lossSum = 0, lossCount = 0;
+    // Every photo once per round, in a new order each round (as 3DGS does): no photo is
+    // left out by chance or seen twice as often as another.
+    let order = [];
     for (let t = 1; t <= steps; t++) {
       if (shouldStop?.()) break;
-      const view = views[Math.floor(Math.random() * views.length)];
+      if (!order.length) order = shuffled(views.length);
+      const view = views[order.pop()];
       const f = await forward(gBuf, n, view.cam, true);
       const tBuf = scratch('target', f.pixels * 12);
       device.queue.writeBuffer(tBuf, 0, Float32Array.from(view.image, (v) => v / 255));
