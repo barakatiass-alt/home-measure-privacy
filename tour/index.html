@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Home Tour</title>
 <meta name="description" content="3D tour of a home measured with Home Measure.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob: data: https://*.supabase.co https://*.workers.dev; worker-src 'self' blob:; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob: data: https://*.supabase.co https://*.workers.dev https://api.homemeasure.app; worker-src 'self' blob:; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <link rel="icon" href="../favicon.png">
 <style>
@@ -153,7 +153,7 @@ function allowed(url) {
     const u = new URL(url, location.href);
     if (u.origin === location.origin) return u.href;
     if (u.protocol === 'https:' && u.hostname.endsWith('.supabase.co') && u.pathname.startsWith('/storage/v1/object/public/')) return u.href;
-    if (u.protocol === 'https:' && u.hostname.endsWith('.workers.dev') && u.pathname.startsWith('/t/')) return u.href;
+    if (u.protocol === 'https:' && (u.hostname.endsWith('.workers.dev') || u.hostname === 'api.homemeasure.app') && u.pathname.startsWith('/t/')) return u.href;
   } catch {}
   return null;
 }
